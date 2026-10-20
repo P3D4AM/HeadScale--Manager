@@ -1,0 +1,41 @@
+#!/usr/bin/env python3
+# ============================================================================
+#  hsctl — Headscale Easy Manager CLI
+#  نقطه ورود ابزار مدیریت. منطق در بسته پایتون «hem» (src/hem) قرار دارد.
+#  این فایل هم به‌صورت مستقیم و هم از مسیر نصب (/opt/headscale-easy-manager)
+#  قابل اجراست؛ مسیر بسته به‌صورت خودکار یافت می‌شود.
+# ============================================================================
+import os
+import sys
+
+# یافتن بسته hem: کنار این فایل (src/) یا در مسیر نصب استاندارد
+_HERE = os.path.dirname(os.path.abspath(__file__))
+_CANDIDATES = [
+    os.path.join(_HERE, "src"),
+    os.path.join(_HERE, "..", "src"),          # اجرای از داخل مخزن
+    "/opt/headscale-easy-manager/src",
+]
+for candidate in _CANDIDATES:
+    if os.path.isdir(os.path.join(candidate, "hem")):
+        if candidate not in sys.path:
+            sys.path.insert(0, candidate)
+        break
+else:
+    sys.stderr.write(
+        "خطا: بسته «hem» پیدا نشد. مطمئن شوید این فایل داخل پوشه پروژه "
+        "headscale-easy-manager (کنار پوشه src/) است.\n"
+    )
+    sys.exit(4)
+
+try:
+    from hem.cli import main
+except ImportError as exc:  # pragma: no cover - خطای محیطی
+    sys.stderr.write(f"خطا در بارگذاری بسته hem: {exc}\n")
+    sys.stderr.write(
+        "احتمالاً پیش‌نیاز python3-yald نصب نیست. نصب: sudo apt install python3-yaml\n"
+        "یا از install.sh استفاده کنید که پیش‌نیازها را نصب می‌کند.\n"
+    )
+    sys.exit(4)
+
+if __name__ == "__main__":
+    sys.exit(main())

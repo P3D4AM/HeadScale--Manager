@@ -1,0 +1,30 @@
+# نمونه بلوک Caddy برای Headscale — مطابق پیکربندی رسمی مستندات Headscale
+# ---------------------------------------------------------------------------
+# این بلوک به‌صورت خودکار توسط نصب‌کننده و بین مارکرهای:
+#     # BEGIN headscale-easy-manager
+#     # END headscale-easy-manager
+# به /etc/caddy/Caddyfile اضافه می‌شود. دامنه را با دامنه خودتان جایگزین کنید.
+#
+# قبل از reload همیشه اعتبارسنجی کنید:
+#     caddy validate --config /etc/caddy/Caddyfile
+#     systemctl reload caddy
+
+# BEGIN headscale-easy-manager
+http://headscale.example.com {
+	# تشخیص captive portal در اندروید (generate_204 باید سریع و بدون ریدایرکت پاسخ دهد)
+	handle /generate_204 {
+		respond 204
+	}
+
+	handle * {
+		redir https://{host}{uri}
+	}
+}
+
+headscale.example.com {
+	reverse_proxy 127.0.0.1:8080 {
+		header_up True-Client-IP {remote_host}
+		header_up X-Real-IP {remote_host}
+	}
+}
+# END headscale-easy-manager
