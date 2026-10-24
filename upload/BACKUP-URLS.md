@@ -42,9 +42,9 @@
 ### SHA-256
 ```
 14dd97116c227de5e9964b173f66eadc82418eae2fa1396cfaa4244396e82d30  headscale-easy-manager-v0.3.1.tar.gz
-219afa88ac086432865584e22d6e6af6d3f88f584dbb233de646772a5420b22d  HeadscaleEasyManager-v0.3.1-win64.zip
+6e97f8383d045d18814fe70841be1402c477b47b90402a1ab069f5705e8d2974  HeadscaleEasyManager-v0.3.1-win64.zip
 ```
-(توجه: sha256 بستهٔ ویندوزی که «از clone تمیز» ساخته شد 219afa88… است — همان بستهٔ نهایی؛ بستهٔ tar.gz به‌دلیل mtime در tar هش متفاوت در هر اجرا می‌دهد — فایل .sha256 همیشه هم‌زمان بازتولید می‌شود.)
+(راستی‌آزمایی مستقل: sha256 داراییِ zip در GitHub Release با فایل محلی بایت‌به‌بایت یکی است — 6e97f838…؛ هر اجرای build-windows.sh به‌دلیل timestamp داخل zip هش تازه می‌سازد — «بستهٔ نهایی» یعنی همان که در Release آپلود شده و .sha256 کنارش نوشته است. مقدار 219afa88… که پیش‌تر ثبت شد مربوط به build مستقلِ clone تمیز در /tmp بود — اصلاح شد. tar.gz نیز به‌دلیل mtime هش متغیر دارد؛ .sha256 هم‌زمان بازتولید می‌شود.)
 
 ### نشانی‌های موقت (تاریخ انقضا کوتاه)
 - tmpfiles.org (۶۰د): tar.gz → https://tmpfiles.org/wAASUdmoPMIx/headscale-easy-manager-v0.3.1.tar.gz
