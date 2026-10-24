@@ -30,3 +30,28 @@
 
 - transfer.sh، 0x0.st، file.io، catbox، bashupload، x0.at، temp.sh و pixeldrain از این سندباکس در دسترس نبودند (خطای شبکه/احراز هویت/۵۰۰) — سه سایت بالا از ده کاندیدا واقعاً جواب دادند.
 - نشانی‌های uguu (۴۸س) و tmpfiles (۶۰د) موقتی‌اند؛ برای پشتیبان بلندمدت gofile معتبرترین است. پس از هر انتشار جدید، این فایل باید به‌روز شود.
+
+---
+
+## v0.3.1 (۲۰۲۶-۱۰-۲۴) — «فاز اصلاح پیش از انتشار»
+
+### پشتیبان اصلی (بادوام): GitHub Release
+- https://github.com/P3D4AM/HeadScale--Manager/releases/tag/v0.3.1
+- دارایی‌ها: tar.gz + zip ویندوزی + هر دو فایل .sha256 (چهار آپلود موفق 201)
+
+### SHA-256
+```
+14dd97116c227de5e9964b173f66eadc82418eae2fa1396cfaa4244396e82d30  headscale-easy-manager-v0.3.1.tar.gz
+219afa88ac086432865584e22d6e6af6d3f88f584dbb233de646772a5420b22d  HeadscaleEasyManager-v0.3.1-win64.zip
+```
+(توجه: sha256 بستهٔ ویندوزی که «از clone تمیز» ساخته شد 219afa88… است — همان بستهٔ نهایی؛ بستهٔ tar.gz به‌دلیل mtime در tar هش متفاوت در هر اجرا می‌دهد — فایل .sha256 همیشه هم‌زمان بازتولید می‌شود.)
+
+### نشانی‌های موقت (تاریخ انقضا کوتاه)
+- tmpfiles.org (۶۰د): tar.gz → https://tmpfiles.org/wAASUdmoPMIx/headscale-easy-manager-v0.3.1.tar.gz
+- tmpfiles.org (۶۰د): zip → https://tmpfiles.org/wMADUhmYqZ5h/headscaleeasymanager-v0.3.1-win64.zip
+- uguu.se (۴۸س): tar.gz → https://d.uguu.se/kSxPyrpB.gz
+
+### صداقت این جلسه
+- gofile.io در این لحظه از سندباکس پاسخ نمی‌داد (store1 آویزان/غیرJSON، store2 404) — در جلسات بعدی دوباره امتحان می‌شود.
+- uguu.se فایل zip را با خطای 415 («Filetype not allowed») رد می‌کند (حتی با پسوند مجاز) — محدودیت میزبان است، نه بسته.
+- بازیابی مطمئن: GitHub Release (بادوام) → در نبود آن tmpfiles (۶۰د) → در جلسهٔ بعدی gofile.

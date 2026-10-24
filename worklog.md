@@ -507,3 +507,21 @@ Stage Summary:
 - سه ریسک امنیتی واقعی بسته شد (WS باز، توکن در URL/تاریخچه ۲۴h، تبادل روی /api)؛ §۵ با تست‌های «نتیجهٔ واقعی» پوشش داده شد؛ CI ویندوزی اجرای واقعی exe را خواهد داد (پس از push نتیجهٔ واقعی Jobs را می‌بینیم).
 - بسته‌ها: download/headscale-easy-manager-v0.3.1.tar.gz (sha256 14dd97116c227de5e9964b173f66eadc82418eae2fa1396cfaa4244396e82d30) + packaging/dist/HeadscaleEasyManager-v0.3.1-win64.zip + sha256.
 - محدودیت صادقانه: اجرای exe روی خودِ ویندوز → CI windows-latest؛ نصب واقعی systemd روی اوبونتوی تازه در سندباکس/CI ممکن نیست (dry-run+منطق با ۱۰۵+ تست؛ گزارش می‌شود).
+
+---
+Task ID: 13 (فاز v0.3.1 — پذیرش/انتشار/راستی‌آزمایی)
+Agent: Z.ai Code (Main Orchestrator)
+Task: §۳ آزمون clone تمیز + انتشار + پشتیبان + E2E مرورگر + گزارش نهایی
+
+Work Log:
+- §۳.۱ clone تمیز از خود گیتهاب (/tmp/clean-clone) — تمام خط از پایه: bun install (ریشه+agent) → lint ✓ → tsc ✓ → docs:generate ۱۵ فصل ✓ → next build + out/index.html ✓ → pytest 104/104 ✓ → تست‌های قابل‌حمل agent 43/43 ✓ → release.sh سبز (319 فایل، sha 4beea9fa… — تاربال مبتنی بر mtime متفاوت است، فایل .sha256 هم‌زمان) → build-windows.sh با ۲۱ [OK] زنده + zip 38M.
+- GitHub Release v0.3.1 (id 422873038) با ۴ دارایی (tar.gz/zip + دو .sha256) — همه 201.
+- محدودیت کشف‌شده و صادقانه گزارش‌شده: توکن fine-grained PAT مجوز Workflows ندارد → push/api برای .github/workflows رد شد (403 «Resource not accessible by personal access token» + push rejected). فایل CI آماده و معتبر (yaml parse ✓، ۲ job/۲۱ step) در .github/workflows/windows-ci.yml روی دیسک مانده؛ با افزودن مجوز Workflows به توکن (یا افزودن فایل از وب‌گیتهاب) فعال می‌شود — شبیه‌سازی/ادعای اجرا نشد.
+- پشتیبان سه‌سایته: tmpfiles tar.gz ✓ + zip ✓؛ uguu tar.gz ✓ (zip → 415 FileType not allowed — محدودیت میزبان)؛ gofile این لحظه در دسترس نبود (store1 آویزان، store2 404). BACKUP-URLS.md به‌روز شد؛ پشتیبان بادوام اصلی = GitHub Release.
+- E2E مرورگر (agent-browser از دروازهٔ :81): صفحهٔ اصلی فارسی بدون خطای console؛ اتصال واقعی SSH (کارت آزمایشی ۲۲۲۲) → نشست فعال z@127.0.0.1 → داشبورد با دادهٔ ۱۰۰٪ واقعی (کاربران ۱/دستگاه‌ها ۰/کلیدها ۵۲/نسخهٔ 0.29.5/Debian 13)؛ کنسول: df -h واقعی (خروجی کامل Filesystem) + «rm -rf /» → «برنامهٔ «rm» در allowlist کنسول نیست.»؛ آموزش ۱۵ فصل + فصل ۱۵ کامل؛ موبایل 390px بدون سرریز افقی (scrollW=390) و فوتر در انتهای طبیعی (gap=0)؛ دسکتاپ 1280px سالم؛ شات‌ها در agent-ctx/v031-*.png. dev.log: panic توربوپک تاریخ OOM قدیمی است (پس از پاک‌سازی .next توسط Task 11)؛ GETهای جدید همه 200 و errors مرورگر خالی.
+- کامیت و push: bfd7acc (به‌جز فایل CI — محدودیت مجوز) — https://github.com/P3D4AM/HeadScale--Manager
+
+Stage Summary:
+- پذیرش §۶: همهٔ تست‌ها (111 agent + 104 python + 43 قابل‌حمل CI) سبز؛ lint/typecheck بدون ignore؛ build واقعی؛ SHA-256 همه‌جا؛ بسته‌ها بررسی‌شده؛ صفر موفقیت کاذب (SUDO_REQUIRED/لغو/NOT_FOUND صادقانه).
+- بستهٔ نهایی: download/headscale-easy-manager-v0.3.1.tar.gz (sha 14dd9711…) + HeadscaleEasyManager-v0.3.1-win64.zip (sha 219afa88…) — هر دو در GitHub Release v0.3.1.
+- آزموده‌نشدهٔ صادقانه: ① اجرای hem-manager.exe روی خودِ ویندوز → نیازمند فعال‌سازی CI (مجوز Workflows توکن) یا ویندوز واقعی؛ تا آن موقع باینری لینوکسیِ هم‌سورس زنده آزموده شد (۲۱ [OK]). ② نصب واقعی روی اوبونتوی تازه با systemd در سندباکس/CI ممکن نیست (systemd نیست) — dry-run/منطق با ۱۰۵+ تست؛ ③ اتصال SSH به VPS واقعی در CI نه (نیازمند سرور) — سرور آزمایشی ۲۲۲۲ پوشش می‌دهد؛ ④ پشتیبان gofile در این جلسه پاسخ نداد.
