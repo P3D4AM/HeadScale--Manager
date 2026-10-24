@@ -72,7 +72,9 @@ log:
   level: info
   format: text
 policy:
-  mode: file
+  # حالت database تا CLI رسمی (policy get/set/check) و رابط گرافیکی بتوانند
+  # سیاست دسترسی را مدیریت کنند (در حالت file با path خالی، policy set کار نمی‌کند).
+  mode: database
   path: ""
 dns:
   magic_dns: true
