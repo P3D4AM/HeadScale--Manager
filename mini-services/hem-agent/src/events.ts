@@ -11,6 +11,7 @@
 import type { Server as IOServer, Socket } from "socket.io";
 import type { SessionManager } from "./sessions";
 import type { JobInfo, JobLogLine, JobLogPage } from "./types";
+import { timingSafeTokenMatch } from "./tokenmatch";
 
 /** آنچه SessionManager از لاگر لازم دارد (پیاده‌سازی واقعی: src/audit.ts) */
 export interface AuditLoggerLike {
@@ -217,8 +218,11 @@ export class JobManager {
   }
 }
 
-/** سیم‌کشی کامل رویدادها: اتاق‌ها + conn:status + job:cancel */
-export function attachEvents(io: IOServer, manager: SessionManager, jobs: JobManager): void {
+/** سیم‌کشی کامل رویدادها: اتاق‌ها + conn:status + job:cancel
+ *  v0.3.1 §4: احراز هویت WebSocket — اگر توکنی برای agent تنظیم شده باشد،
+ *  اتصالِ بدون هدر X-HEM-Token / کوکی hem_token معتبر، بلافاصله قطع می‌شود؛
+ *  هیچ رویداد حساسی (رویدادهای job و conn) به کلاینتی بدون توکن می‌رسد. */
+export function attachEvents(io: IOServer, manager: SessionManager, jobs: JobManager, token?: string): void {
   jobs.attach(io);
 
   manager.onStatus = (sessionId, status, detail) => {
@@ -226,6 +230,14 @@ export function attachEvents(io: IOServer, manager: SessionManager, jobs: JobMan
   };
 
   io.on("connection", (socket: Socket) => {
+    if (token && !handshakeTokenMatches(socket, token)) {
+      // درخواست بدون توکن معتبر → بدون هیچ رویداد/داده‌ای قطع می‌شود
+      console.log(
+        `[hem-agent] ws rejected (no/invalid token) from ${socket.handshake.address ?? "unknown"}`,
+      );
+      socket.disconnect(true);
+      return;
+    }
     socket.on("subscribe", (room: unknown) => {
       if (typeof room === "string" && ROOM_RE.test(room)) socket.join(room);
     });
@@ -238,4 +250,20 @@ export function attachEvents(io: IOServer, manager: SessionManager, jobs: JobMan
       if (typeof ack === "function") ack({ ok });
     });
   });
+}
+
+/** توکن دست‌داداریِ socket.io: هدر X-HEM-Token یا کوکی hem_token (v0.3.1 §4) */
+function handshakeTokenMatches(socket: Socket, expected: string): boolean {
+  const h = socket.handshake.headers;
+  const header = h["x-hem-token"];
+  const headerVal = Array.isArray(header) ? header[0] : header;
+  if (typeof headerVal === "string" && headerVal.length > 0) {
+    return timingSafeTokenMatch(headerVal, expected);
+  }
+  const cookie = h.cookie;
+  if (typeof cookie === "string") {
+    const m = /(?:^|;\s*)hem_token=([^;\s]+)/.exec(cookie);
+    if (m && m[1]) return timingSafeTokenMatch(m[1], expected);
+  }
+  return false;
 }

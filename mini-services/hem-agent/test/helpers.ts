@@ -30,7 +30,12 @@ export interface TestStack {
   dispose: () => void;
 }
 
-export function buildTestStack(): TestStack {
+export interface BuildStackOpts {
+  /** توکن اختیاری X-HEM-Token — برای تست‌های احراز هویت (v0.3.1 §4) */
+  token?: string;
+}
+
+export function buildTestStack(opts: BuildStackOpts = {}): TestStack {
   const home = tmpHome();
   const redactor = new Redactor();
   const audit = new AuditLogger(home, redactor);
@@ -45,7 +50,7 @@ export function buildTestStack(): TestStack {
     audit,
     redactor,
     jobs,
-    token: undefined,
+    token: opts.token,
     uiDir: path.join(home, "ui-nonexistent"),
     version: AGENT_VERSION,
     startedAt: Date.now(),
@@ -84,8 +89,12 @@ export async function listenApp(app: Express): Promise<ListeningServer> {
   });
 }
 
-/** سرور HTTP + socket.io وصل به همان پورت (برای تست‌های رویداد job) */
-export async function listenStackIo(stack: TestStack): Promise<ListeningServer & { closeIo: () => Promise<void> }> {
+/** سرور HTTP + socket.io وصل به همان پورت (برای تست‌های رویداد job)
+ *  token اختیاری → احراز هویت WS مثل حالت دسکتاپ (v0.3.1 §4) */
+export async function listenStackIo(
+  stack: TestStack,
+  opts: { token?: string } = {},
+): Promise<ListeningServer & { closeIo: () => Promise<void> }> {
   const { Server: IOServer } = await import("socket.io");
   const { attachEvents } = await import("../src/events");
   return new Promise((resolve) => {
@@ -93,7 +102,7 @@ export async function listenStackIo(stack: TestStack): Promise<ListeningServer &
       const addr = server.address();
       const port = typeof addr === "object" && addr ? addr.port : 0;
       const io = new IOServer(server, { cors: { origin: "*" } });
-      attachEvents(io, stack.manager, stack.jobs);
+      attachEvents(io, stack.manager, stack.jobs, opts.token);
       resolve({
         baseUrl: `http://127.0.0.1:${port}`,
         close: () =>

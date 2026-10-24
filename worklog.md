@@ -467,3 +467,43 @@ Work Log:
 Stage Summary:
 - ساختار گیت حالا خودکفاست: clone تمیز = کل محصول (وب + agent + مخزن پایتون + تست‌ها)؛ تاریخچهٔ پایتون در archive/hem-python؛ خروجی‌ها/داده‌های توسعه هرگز وارد گیت نمی‌شوند.
 - لازم است پس از این کامیت، release.sh دوباره اجرا و تأیید شود (HEAD باید فایل‌های fold را داشته باشد).
+
+---
+Task ID: 11
+Agent: Z.ai Code (Sub-agent — §1 installer paths)
+Task: فاز v0.3.1 §۱ — حذف مسیر پیش‌فرض توسعه‌دهنده از resolution نصب‌کننده؛ باندل installer/ در بستهٔ ویندوزی؛ توقف صادقانه هنگام نبود مخزن
+
+Work Log:
+- config.ts: زنجیرهٔ حلٔ جدید projectRoot به‌ترتیب: (۱) HEM_PROJECT_ROOT تریما‌شده/غیرخالی؛ (۲) packaged: <dir(process.execPath)>/installer (exe ویندوزی/باینری لینوکسی؛ در حالت bun توسعه‌ای آنجا installer/ نیست و طبیعتاً می‌افتد به بعد)؛ (۳) checkout توسعه: resolve(import.meta.dir,../../../headscale-easy-manager) با گارد ردشدن در باینری کامپایل‌شده (import.meta.dir داخل /$bunfs). پیش‌فرض هاردکد /home/z/my-project/headscale-easy-manager حذف شد؛ در حالت ناکام، «انتظارِ packaged» برگردانده می‌شود تا خطا مسیر را شامل باشد.
+- API تازه در config.ts (قابل تست): installerRootCandidates(explicit?,exeDir?,srcDir?) خالص و مرتب؛ resolveInstallerRoot(candidates,skipped?) با tried[] (source/path/exists برای هر کاندید) و skipped[] (دلیل bunfs)؛ installerRootStatus() واقعی همین اجرا؛ installerRootErrorMessage(status) — پیام فارسی که همهٔ مسیرها را با نتیجهٔ وجود install.sh فهرست و راه‌حل (باندل installer/ توسط build-windows.sh یا HEM_PROJECT_ROOT صریح) را می‌دهد.
+- installer.ts prepareRepo: توقف صادقانه «پیش از هر تاربال/آپلودی» — HemError NOT_FOUND با پیام غنی از installerRootErrorMessage؛ بدون fallback و بدون هیچ ادعای آماده/موفق. renderAnswersConf/validateSettings/روترها دست‌نخورده.
+- build-windows.sh: (a) UI «همیشه تازه» در /tmp — ورودی UI_OUT حذف شد، بازاستفادهٔ کش ui-out حذف شد، خروجی تازه مستقیم وارد $STAGE/ui و کپی موقت پاک می‌شود؛ در پایان اجرا rm -rf ui-out با لاگ. (b) installer/ از «درخت کامیت‌شده»: git archive HEAD:headscale-easy-manager | tar -x -C $STAGE/installer با گارد نصب‌شدن install.sh (بستهٔ بدون نصب‌کننده هرگز ساخته نمی‌شود) + پیش‌شرط‌های repo/nested-git/install.sh در ابتدای اسکریپت. (c) linux-verify هم چیدمان packaged گرفت (cp -a installer + گارد) و chk «۰) installer/ کنار باینری (packaged layout)». (d) پچ‌های مردهٔ درون‌کپی حذف شدند (پیش از حذف راستی‌آزمایی شد: src/app/api و src/app/api/docs وجود ندارند، next.config.ts واقعی output:"export" دارد، learn-section ارجاعی به /api/docs ندارد). (e) README-WINDOWS-FA.txt: heredoc بدون نقل عمدی → «نسخهٔ $VERSION» (تنها $ متن؛ بک‌تیک/بک‌اسلش ندارد — بررسی شد)؛ ردیف installer\ به «محتویات» اضافه شد با توضیح /tmp/hem-install-<ts> و /opt/headscale-easy-manager و «مسیرهای لینوکسی سرور هیچ‌وقت به ویندوز شما اشاره نمی‌کنند». (g) بعد از unzip -l، grep installer/install.sh در zip اجباری شد. نسخه‌ها دست نخوردند (پایان کار ارکستراتور).
+- اثبات زندهٔ زنجیره با باینری کامپایل‌شدهٔ واقعی (bun --compile): بدون installer/ → source:"none"، projectRoot = انتظارِ packaged، پیام فارسی کامل؛ با installer/ کنار باینری → source:"packaged"، ok:true. گارد /$bunfs کار می‌کند (tried فقط packaged).
+- test/installer.test.ts: سطر هاردکد حذف و PROJECT_ROOT = projectRoot() شد؛ ۶ تست تازه (۸۳→۸۹): کاندیدها با ورودی تمیز هرگز برابر مسیر ممنوع نیستند (+env خالی/فاصله‌ای کاندید نمی‌سازد)؛ اولویت env>packaged>dev با نخستین معتبر؛ حالت none با tried کامل و path = انتظارِ packaged؛ گارد bunfs + پیام «تنظیم نشده»/دلیل؛ محتوای پیام خطا (ویزارد متوقف می‌شود/هرگز آماده/راه‌حل/مسیرها)؛ و ادغام زندهٔ installerRootStatus در همین اجرا.
+- رفع محیطی (بدون تغییر کد): پنیک Turbopack در dev server (cache DB خراب — «Failed to restore task data») با rm -rf .next و touch mtime next.config.ts برطرف شد؛ GET / دوباره 200 (گرم: 77ms). next.config.ts محتوایی تغییر نکرد.
+
+Stage Summary:
+- §۱ کامل: هیچ مسیر توسعه‌دهنده‌ای در resolution نیست؛ بستهٔ ویندوزی installer/ را کنار hem-manager.exe باندل می‌کند (از درخت کامیت‌شده) و بدون آن صادقانه متوقف می‌شود؛ باینری لینوکسی همان چیدمان را می‌گیرد و راستی‌آزمایی می‌شود.
+- راستی‌آزمایی: bash -n OK؛ bun run test 89/89 ✓ (پیش از این 83؛ ۶ تست §۱ جدید) — نکته: با «bun test» خالی (timeout پیش‌فرض ۵s) afterAllِ test/jobs.test.ts گاهی تایماوت می‌خورد؛ در isolation هم ۳/۳ تکرار شد → عیب «ازپیش‌موجود» در فایلی خارج از دسترسی من است (فرمان canonical پروژه bun run test با --timeout 120000 است و ۸۹/۸۹ پاس می‌شود)؛ tsc agent و root هر دو پاک؛ lint exit 0؛ git archive HEAD:headscale-easy-manager → ۱۰۸ مدخل شامل install.sh.
+- تغییرات فقط در ۴ فایل مجاز: src/config.ts، src/installer.ts، packaging/build-windows.sh، test/installer.test.ts — بدون کامیت (برای بازبینی ارکستراتور)؛ انحراف‌های جززی: --exclude=headscale-easy-manager در کپی UI-build افزوده شد (پس از fold، مخزن نصب‌کننده نباید در کپی UI بیاید — پیش از fold هم هرگز ورودی بیلد UI نبود)؛ یک پیش‌شرط working-tree برای install.sh افزوده شد؛ scripts/generate-docs.ts (خارج از دسترسی) مسیر هاردکد ندارد (از محل اسکریپت حل می‌کند) ولی HEM_PROJECT_ROOT می‌پذیرد — برای هماهنگی آیندهٔ ارکستراتور یادداشت شد.
+
+---
+Task ID: 12 (فاز v0.3.1 — امنیت/بازیابی/CI/نسخه)
+Agent: Z.ai Code (Main Orchestrator)
+Task: §۴ امنیت agent + §۵ آزمون عملیات مخرب و بازیابی + §۳.۴ CI ویندوزی + ارتقای نسخه/انتشار v0.3.1
+
+Work Log:
+- §۴ کشف و رفع آسیب‌پذیری واقعی: WebSocket (socket.io) بدون هیچ احراز هویت بود — هر فرایند محلی می‌توانست job:*/conn:* حساس را گوش دهد. fix: attachEvents(..., token?) — handshake بدون هدر/کوکی معتبر بلافاصله disconnect(true) می‌شود (src/tokenmatch.ts جدید: مقایسهٔ timing-safe).
+- §۴ نشت توکن در URL/تاریخچه/لاگ: تبادل ?token= یک‌بارمصرف شد — کوکی جلسه‌ای HttpOnly/SameSite=Strict (بدون Max-Age؛ با بستن مرورگر می‌میرد) + 303 به همان مسیر بدون token (حفظ XTransformPort و بقیهٔ پارامترها)؛ token در query هرگز احراز هویت API نیست (فقط هدر/کوکی، timing-safe). درخواست‌های /api هرگز تبادل نمی‌کنند.
+- test/auth.test.ts (۱۹ تست مثبت/منفی): 401 بدون توکن/توکن نادرست/کوکی نادرست/token-in-query؛ 403 Origin غیرلوکال؛ 200 هدر/کوکی معتبر؛ 303+Set-Cookie جلسه‌ای اولین بار؛ دفعهٔ دوم (بازیابی از تاریخچه) بدون کوکی؛ /api بدون تبادل؛ WS بدون توکن/توکن نادرست → قطع؛ WS با هدر/کوکی → متصل + job:cancel با ack.
+- §۵ test/recovery.test.ts: لغوی واقعی وسط عملیات روی SSH زنده (execCancellable sleep-3 + cancel در ۴۰۰ms) → نتیجهٔ صادقانهٔ «لغوشده» (resolved-cancelled یا thrown EXEC_FAILED با detail.cancelled — هرگز exit 0 جعلی) + job با jobDone(false, «لغو»)؛ retry-after-error: دستور مسدود (COMMAND_BLOCKED) → سیستم سالم → df -h/ss واقعی exitCode 0.
+- §۵ tests/test_recovery_rerun.py: answers ناقص (magic==domain) → خطای غیرصفر بدون تغییر (snapshot مسیرهای حساس)؛ اصلاح → dry-run موفق ۱۷گامی؛ اجرای مجدد → همان عناوین گام‌ها (مقایسهٔ عنوان‌ها نه متن نتیجهٔ گام‌های شبکه‌ای ۴/۷ — علت: نوسان شبکه رندر کاذب می‌داد؛ عنوان‌ها قطعی‌اند).
+- §۳.۴ .github/workflows/windows-ci.yml: job windows = کامپایل و «اجرای واقعی» hem-manager.exe روی windows-latest (توکن یک‌بارمصرف، 401/200، installer: ok (packaged)، UI فارسی، SHA-256، آپلود artifact) + job linux = clone تمیز با lint/typecheck/docs/next-build/pytest کامل/تست‌های قابل‌حمل agent (auth/allowlist/secrets — ۹ فایل دیگر به fixture سندباکس وابسته‌اند)/release.sh/build-windows.sh.
+- ادغام با کار Task 11: بخش VERIFY از build-windows.sh با قرارداد جدید توکن هم‌گام شد (303 جلسه‌ای + یک‌بارمصرف + بدون Max-Age) — همهٔ [OK].
+- ارتقای نسخه 0.3.1 همه‌جا: package.json (بیرونی+agent)، AGENT_VERSION، __init__.py، pyproject (از 0.1.0ِ ناهم‌گام!)، README-FA/README، CHANGELOG با مدخل صادقانهٔ [0.3.1] (شامل آزموده‌نشده‌ها).
+- گیت‌های محلی: lint 0؛ tsc (root+agent) 0؛ agent 111/111 (۵۶۶ expect)؛ pytest 104/104؛ release.sh v0.3.1 سبز (319 فایل، 748K، sha256 14dd9711…)؛ build-windows.sh سبز با ۲۲ [OK] زنده (installer packaged + توکن جدید + SSH TOFU + exec واقعی) — zip ویندوزی ۱۰۴MB با installer/ داخل بسته.
+
+Stage Summary:
+- سه ریسک امنیتی واقعی بسته شد (WS باز، توکن در URL/تاریخچه ۲۴h، تبادل روی /api)؛ §۵ با تست‌های «نتیجهٔ واقعی» پوشش داده شد؛ CI ویندوزی اجرای واقعی exe را خواهد داد (پس از push نتیجهٔ واقعی Jobs را می‌بینیم).
+- بسته‌ها: download/headscale-easy-manager-v0.3.1.tar.gz (sha256 14dd97116c227de5e9964b173f66eadc82418eae2fa1396cfaa4244396e82d30) + packaging/dist/HeadscaleEasyManager-v0.3.1-win64.zip + sha256.
+- محدودیت صادقانه: اجرای exe روی خودِ ویندوز → CI windows-latest؛ نصب واقعی systemd روی اوبونتوی تازه در سندباکس/CI ممکن نیست (dry-run+منطق با ۱۰۵+ تست؛ گزارش می‌شود).

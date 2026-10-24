@@ -82,7 +82,7 @@ bash packaging/build-windows.sh          # یا: bun run package:windows
 ### ۵) ساخت انتشار کامل (release)
 
 ```bash
-bash scripts/release.sh    # در ریشهٔ پروژهٔ بیرونی — مسیر انتشار v0.3.0
+bash scripts/release.sh    # در ریشهٔ پروژهٔ بیرونی — مسیر انتشار v0.3.1
 ```
 
 این اسکریپت release (مالکیت مسیر انتشار): تولید محتوای آموزش در زمان ساخت (`bun run docs:generate`)، گیت‌های تایپ/lint و بستهٔ انتشار تمیزِ مخزن (`download/headscale-easy-manager-v<VER>.tar.gz` + `.sha256`) با allowlist سخت‌گیرانه (بدون `.git`، `.env`، دیتابیس توسعه، کش‌ها و لاگ‌ها). بستهٔ ویندوز با مسیر ۴ (جدا) ساخته می‌شود.

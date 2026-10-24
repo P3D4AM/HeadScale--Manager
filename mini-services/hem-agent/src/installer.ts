@@ -19,7 +19,7 @@ import type { SessionManager } from "./sessions";
 import { shellQuote, type SshSession } from "./ssh";
 import { createJobStreamer, detectFinalState, parseStepLine } from "./jobstream";
 import type { InstallSettings, PlanInputField, ParsedInstallStep } from "./types";
-import { projectRoot } from "./config";
+import { installerRootErrorMessage, installerRootStatus } from "./config";
 
 type AsyncHandler = (req: Request, res: Response) => Promise<void>;
 const wrap =
@@ -289,10 +289,14 @@ export interface RepoPrepareResult {
 }
 
 export async function prepareRepo(ssh: SshSession): Promise<RepoPrepareResult> {
-  const root = projectRoot();
-  if (!fs.existsSync(path.join(root, "install.sh"))) {
-    throw new HemError("NOT_FOUND", `مخزن نصب‌کننده در «${root}» پیدا نشد (install.sh نیست — HEM_PROJECT_ROOT را بررسی کنید).`);
+  // توقف صادقانه «پیش از هر تاربال/آپلودی» (v0.3.1 §1): اگر مخزن نصب‌کننده
+  // در هیچ‌کدام از کاندیدهای زنجیره نبود، هرگز «آماده/موفق» اعلام نمی‌شود —
+  // پیام، همهٔ مسیرهای بررسی‌شده را با نتیجهٔ وجودشان فهرست می‌کند.
+  const status = installerRootStatus();
+  if (!status.ok) {
+    throw new HemError("NOT_FOUND", installerRootErrorMessage(status));
   }
+  const root = status.path;
   const tmp = path.join(os.tmpdir(), `hem-repo-${Date.now()}-${randomUUID().slice(0, 6)}.tar.gz`);
   const tar = Bun.spawn(
     [

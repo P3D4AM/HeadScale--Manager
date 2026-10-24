@@ -35,7 +35,7 @@ mini-services/hem-agent/
 ```
 
 - `bun run dev` → `bun --hot index.ts`. Server binds **127.0.0.1 only**. Gateway access in sandbox uses `?XTransformPort=3005` (agent MUST ignore the query param itself).
-- Optional bearer token (`X-HEM-Token`): if env `HEM_AGENT_TOKEN` set (desktop mode), every /api request must carry it; UI is opened with `/?token=…`. In sandbox dev it is unset.
+- Optional bearer token (`X-HEM-Token`): if env `HEM_AGENT_TOKEN` set (desktop mode), every /api request must carry it (header or `hem_token` cookie; comparison is timing-safe). UI is opened with `/?token=…` — **one-time exchange (v0.3.1 §4)**: the first GET of a UI path with the correct token sets a session cookie (`HttpOnly; SameSite=Strict`, no Max-Age) and 303-redirects to the same path without `token` (other query params like `XTransformPort` are preserved); replaying the link from browser history/logs never yields another cookie, and `token` in a query string is never an API auth method. WebSocket (socket.io) connections are authenticated the same way — connections without a valid header/cookie are disconnected immediately and receive no events. Tests: `test/auth.test.ts` (positive+negative). In sandbox dev it is unset.
 - **UI static serving**: if `ui/` dir exists → serve it at `/` (SPA fallback to index.html, no cache headers for index.html). Else `/` returns `{ok:true, service:'hem-agent'}`.
 
 ## 2. Facts (verified against REAL headscale v0.29.5 binary in this sandbox)

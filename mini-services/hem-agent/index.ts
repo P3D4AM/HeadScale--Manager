@@ -4,17 +4,20 @@
 //
 // حالت دسکتاپ (HEM_DESKTOP=1 یا --desktop — برنامهٔ ویندوزی):
 //   • اگر HEM_AGENT_TOKEN تنظیم نشده باشد، یک توکن تصادفی برای «همین اجرا» ساخته می‌شود.
-//   • نشانی UI با ?token= چاپ می‌شود و مرورگر پیش‌فرض باز می‌شود (شکست بازکردن
-//     غیرمهم است — نشانی همیشه چاپ می‌شود).
-//   • API توکن را از هدر X-HEM-Token «یا» کوکی hem_token می‌پذیرد؛ بازکردن
-//     /?token=… کوکی را روی سیستم کاربر می‌گذارد (api.ts).
+//   • نشانی UI با ?token= چاپ و مرورگر باز می‌شود؛ تبادل token→کوکی «یک‌بارمصرف»
+//     است (v0.3.1 §4): پس از اولین استفاده، لینک قدیمی در تاریخچهٔ مرورگر دیگر
+//     معتبر نیست؛ کوکی جلسه‌ای HttpOnly/SameSite=Strict روی سیستم کاربر می‌نشیند
+//     و 303 نشانی را بدون token تمیز می‌کند. احراز هویت API فقط با هدر
+//     X-HEM-Token یا همان کوکی است — token در query هیچ‌وقت معتبر نیست.
+//   • WebSocket هم مانند HTTP توکن‌سنجی می‌شود (events.ts) — اتصال بدون توکن
+//     معتبر بلافاصله قطع می‌شود و هیچ رویداد حساسی دریافت نمی‌کند.
 
 import { spawn } from "node:child_process";
 import { randomBytes } from "node:crypto";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { Server as IOServer } from "socket.io";
-import { agentHome, agentHost, agentPort, agentToken, desktopMode, AGENT_VERSION } from "./src/config";
+import { agentHome, agentHost, agentPort, agentToken, desktopMode, AGENT_VERSION, installerRootStatus } from "./src/config";
 import { createApp } from "./src/api";
 import { attachEvents, JobManager } from "./src/events";
 import { SessionManager } from "./src/sessions";
@@ -64,13 +67,32 @@ const app = createApp({
 const host = agentHost();
 const port = agentPort();
 const uiUrl = `http://127.0.0.1:${port}/${token ? `?token=${token}` : ""}`;
+
+// صداقت راه‌اندازی (v0.3.1 §1): وضعیت مخزن نصب‌کننده همیشه گزارش می‌شود —
+// اگر installer/ کنار برنامه نیست، ویزارد نصب با خطای روشن متوقف می‌شود و
+// هرگز «آماده/موفق» اعلام نمی‌شود.
+const rootStatus = installerRootStatus();
+if (rootStatus.ok) {
+  console.log(`[hem-agent] installer: ok (${rootStatus.source}) → ${rootStatus.path}`);
+} else {
+  console.log(
+    `[hem-agent] installer: NOT FOUND (source: ${rootStatus.source}) — expected: ${rootStatus.path}`,
+  );
+  console.log(
+    "[hem-agent] ⚠ بدون installer/ کنار برنامه، ویزارد نصب با خطای روشن متوقف می‌شود (هرگز موفق/آماده اعلام نمی‌شود). بستهٔ ویندوزی رسمی این پوشه را دارد؛ HEM_PROJECT_ROOT هم قابل تنظیم است.",
+  );
+}
+
 const server = app.listen(port, host, () => {
   console.log(`[hem-agent] listening on http://${host}:${port} (home: ${home})`);
   console.log(
     `[hem-agent] version ${AGENT_VERSION} | platform ${process.platform} | ui: ${fs.existsSync(uiDir) ? "served" : "none"}${isDesktop ? " | mode: desktop" : ""}`,
   );
   if (isDesktop) {
-    if (tokenGenerated) console.log("[hem-agent] token: generated for this run (set HEM_AGENT_TOKEN to pin it)");
+    if (tokenGenerated) {
+      console.log("[hem-agent] token: generated for this run (set HEM_AGENT_TOKEN to pin it)");
+      console.log("[hem-agent] این نشانی یک‌بارمصرف است — پس از اولین بازشدن، لینک قدیمی (تاریخچهٔ مرورگر) دیگر معتبر نیست.");
+    }
     // نشانی همیشه چاپ می‌شود — حتی اگر بازکردن مرورگر شکست بخورد
     console.log(`[hem-agent] desktop UI: ${uiUrl}`);
     openDefaultBrowser(uiUrl);
@@ -106,7 +128,7 @@ const io = new IOServer(server, {
     },
   },
 });
-attachEvents(io, manager, jobs);
+attachEvents(io, manager, jobs, token);
 
 function shutdown(signal: string): void {
   console.log(`[hem-agent] ${signal} received — closing sessions…`);

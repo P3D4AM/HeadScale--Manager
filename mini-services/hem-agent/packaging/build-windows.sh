@@ -3,16 +3,15 @@
 # build-windows.sh — ساخت بستهٔ ویندوزی «مدیر آسان هداسکیل» (Headscale Easy Manager)
 # ----------------------------------------------------------------------------
 # ورودی‌ها:
-#   UI_OUT (env, اختیاری)  — پوشهٔ حاوی خروجی استاتیک Next.js (out/) برای UI.
-#                            اگر خالی/غایب باشد، همین اسکریپت UI را می‌سازد
-#                            (کپی بی‌اثرِ پروژهٔ بیرونی به /tmp + bunx next build).
-#                            «مسیر 7-a» (اسکریپت release/تولید مستندات) نیز می‌تواند
-#                            همین ورودی را تأمین کند — هر دو روش پشتیبانی می‌شوند.
 #   HEM_VERSION (env, اختیاری) — پیش‌فرض: فیلد version در package.json.
+#   (UI_OUT حذف شد — v0.3.1 §1: UI «همیشه تازه» ساخته می‌شود؛ هیچ بازاستفادهٔ
+#    کشی از ui-out/ نیست و آن پوشه در پایان اجرا حذف می‌شود.)
 #
 # خروجی‌ها (زیر packaging/dist/):
 #   hem-manager/                    محتوای پوشهٔ برنامهٔ ویندوزی:
 #     ├─ hem-manager.exe            باینری agent (bun --compile، cross-compile ویندوز)
+#     ├─ installer/                  مخزن نصب‌کننده — کنار exe باندل می‌شود (v0.3.1 §1)؛
+#     │                              بدون آن، ویزارد نصب با خطای واضح متوقف می‌شود.
 #     ├─ ui/                         رابط وب فارسی (استاتیک؛ exe آن را سرو می‌کند)
 #     ├─ README-WINDOWS-FA.txt       راهنمای سریع فارسی
 #     ├─ install.ps1                 نصب (LOCALAPPDATA + میانبرها، بدون Administrator)
@@ -22,6 +21,8 @@
 #                                    در این لینوکس‌باکس اجرا نمی‌شود؛ باینری لینوکسی
 #                                    از «همان سورس» کامپایل شده و زنده آزموده می‌شود
 #                                    (صادقانه: این جایگزینِ آزمون روی خودِ ویندوز نیست).
+#                                    چیدمان packaged (installer/ کنار باینری) هم برای
+#                                    آن تکرار و بررسی می‌شود.
 #   HeadscaleEasyManager-v<VER>-win64.zip (+ .sha256)
 #
 # راستی‌آزمایی زندهٔ باینری لینوکسی (هر بار اجرای اسکریپت):
@@ -33,14 +34,17 @@
 #      (console allowlist: df -h) + probe واقعی — یعنی ssh2ِ داخل باینری کامپایل‌شده کار می‌کند.
 #
 # یادداشت‌های فنی (انحراف‌های موجه):
+#   • UI همیشه تازه در /tmp ساخته می‌شود (v0.3.1 §1) — خروجی build مستقیم وارد
+#     $STAGE/ui می‌شود؛ پوشهٔ کهنهٔ ui-out/ (کش؛ در گیت ignore است) در پایان
+#     اجرا حذف می‌شود.
 #   • node_modules با «hardlink» (cp -al) به کپی /tmp وصل می‌شود نه symlink —
 #     Turbopack سیم‌لینک به بیرون از ریشهٔ build را رد می‌کند (خطای واقعی).
-#   • پچ‌های UI فقط «درون کپی» اعمال می‌شوند (output:export، تبدیل docs API به
-#     force-static + generateStaticParams، جابه‌جایی /api/docs → /api/docs-index به
-#     دلیل برخورد مسیر فایل/پوشه در static export). وقتی مسیر 7-a (next.config
-#     static + scripts/generate-docs.ts) فرود کند، این پچ‌ها بی‌اثر/بدون‌تغییر می‌مانند.
-#   • packaging/dist در گیت ignore نمی‌شود — mini-services خودش مخزن گیت نیست و
-#     پروژهٔ بیرونی هم track نمی‌شود (توصیهٔ مأموریت: skip).
+#   • پچ‌های درون‌کپی UI حذف شدند (v0.3.1): next.config.ts واقعی output:"export"
+#     دارد و src/app/api دیگر وجود ندارد — مسیر 7-a کامل فرود کرده است.
+#   • installer/ عین «درخت کامیت‌شده» است (git archive HEAD:headscale-easy-manager،
+#     همان روش release.sh پس از fold v0.3.1) — نه فایل‌های ردیابی‌نشده/کش؛
+#     هیچ مسیر توسعه‌دهنده‌ای روی ماشین کاربر فرض نمی‌شود.
+#   • packaging/dist در گیت ignore است — خروجی ساخت است، نه سورس.
 # ============================================================================
 set -euo pipefail
 
@@ -48,7 +52,6 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 AGENT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"                       # mini-services/hem-agent
 OUTER_DIR="$(cd "$AGENT_DIR/../.." && pwd)"                     # ریشهٔ پروژهٔ بیرونی (Next.js app)
 VERSION="${HEM_VERSION:-$(grep -m1 '"version"' "$AGENT_DIR/package.json" | sed -E 's/.*"version": *"([^"]+)".*/\1/')}"
-UI_OUT="${UI_OUT:-$AGENT_DIR/ui-out}"
 DIST="$SCRIPT_DIR/dist"
 STAGE="$DIST/hem-manager"
 LINUX_DIR="$DIST/linux-verify"
@@ -61,6 +64,11 @@ fail() { printf '\033[1;31m[build-windows] خطا:\033[0m %s\n' "$*" >&2; exit 1
 
 [ -f "$AGENT_DIR/index.ts" ] || fail "index.ts در $AGENT_DIR پیدا نشد."
 [ -d "$OUTER_DIR/src/app" ]  || fail "پروژهٔ بیرونی (Next.js) در $OUTER_DIR پیدا نشد."
+# --- پیش‌شرط‌های installer/ (v0.3.1 §1) — پیش از هر کاری ---------------------
+command -v git >/dev/null 2>&1 || fail "git روی PATH نیست — ساخت installer/ به git archive نیاز دارد."
+[ -d "$OUTER_DIR/.git" ] || fail "$OUTER_DIR مخزن گیت نیست — installer/ فقط از درخت کامیت‌شدهٔ همان گیت ساخته می‌شود (هیچ مسیر توسعه‌دهنده‌ای فرض نمی‌شود)."
+[ ! -e "$OUTER_DIR/headscale-easy-manager/.git" ] || fail "مخزن تو در تو — fold v0.3.1 انجام نشده (headscale-easy-manager/.git موجود است)."
+[ -f "$OUTER_DIR/headscale-easy-manager/install.sh" ] || fail "install.sh در درخت کاری headscale-easy-manager نیست — درخت کامیت‌شده (HEAD) باید مخزن پایتون را داشته باشد (fold v0.3.1)."
 log "نسخه: $VERSION | agent: $AGENT_DIR | پروژهٔ بیرونی: $OUTER_DIR"
 
 # ----------------------------------------------------------------------------
@@ -74,16 +82,20 @@ else
 fi
 
 # ----------------------------------------------------------------------------
-# ۱) UI استاتیک — از UI_OUT آماده، یا ساخت خودکار در /tmp
+# ۱) UI استاتیک — «همیشه تازه» در /tmp (v0.3.1 §1؛ بازاستفادهٔ کش وجود ندارد)
 # ----------------------------------------------------------------------------
+UI_SRC=""   # <work>/out — خروجی تازهٔ همین اجرا؛ مستقیم وارد $STAGE/ui می‌شود
+UI_WORK=""  # کپی موقت build؛ پس از استیج حذف می‌شود
+
 build_ui() {
   local work="/tmp/hem-ui-build-$(date +%s)-$$"
-  log "ساخت UI استاتیک در $work …"
+  log "ساخت تازهٔ UI استاتیک در $work (هر اجرا — بدون بازاستفادهٔ خروجی قبلی) …"
   mkdir -p "$work"
   tar -C "$OUTER_DIR" -cf - \
     --exclude=node_modules --exclude=.next --exclude=.git \
     --exclude=download --exclude=upload --exclude=dev.log --exclude=agent-ctx \
     --exclude='mini-services/*/node_modules' --exclude=db --exclude=tool-results \
+    --exclude=headscale-easy-manager \
     . | tar -C "$work" -xf -
 
   # node_modules با hardlink (Turbopack symlink به بیرون از ریشهٔ build را رد می‌کند)
@@ -92,66 +104,14 @@ build_ui() {
     cp -a "$OUTER_DIR/node_modules" "$work/node_modules"
   fi
 
-  # ---- پچ‌های فقط-درون-کپی -------------------------------------------------
-  # next.config: اگر static export هنوز تنظیم نشده (مسیر 7-a هنوز فرود نکرده)
-  if ! grep -q 'output: "export"' "$work/next.config.ts"; then
-    log "پچ کپی: next.config → static export (تا وقتی 7-a خودش تنظیمش کند)"
-    cat > "$work/next.config.ts" <<'EOF'
-import type { NextConfig } from "next";
-
-const nextConfig: NextConfig = {
-  output: "export",
-  images: { unoptimized: true },
-  typescript: { ignoreBuildErrors: true },
-  reactStrictMode: false,
-};
-
-export default nextConfig;
-EOF
-  fi
-
-  # مسیر hello قالب — در بستهٔ دسکتاپ، /api متعلق به agent است
-  rm -f "$work/src/app/api/route.ts"
-
-  # docs API: force-dynamic → force-static + generateStaticParams؛ و جابه‌جایی
-  # فهرست به /api/docs-index (برخورد فایل/پوشه در static export — out/api/docs)
-  if [ -f "$work/src/app/api/docs/route.ts" ]; then
-    log "پچ کپی: docs API → force-static + انتقال فهرست به /api/docs-index"
-    sed -i "s/export const dynamic = 'force-dynamic'/export const dynamic = 'force-static'/" \
-      "$work/src/app/api/docs/route.ts" "$work/src/app/api/docs/[slug]/route.ts"
-    mkdir -p "$work/src/app/api/docs-index"
-    mv "$work/src/app/api/docs/route.ts" "$work/src/app/api/docs-index/route.ts"
-    cat >> "$work/src/app/api/docs/[slug]/route.ts" <<'EOF'
-
-// Static export: پیش‌تولید همهٔ slugهای فصل (فقط در کپیِ بسته‌بندی)
-export async function generateStaticParams() {
-  const fs = await import('node:fs/promises')
-  try {
-    const files = await fs.readdir(DOCS_FA_DIR)
-    return files.filter((f) => f.endsWith('.md')).map((f) => ({ slug: f.replace(/\.md$/, '') }))
-  } catch {
-    return []
-  }
-}
-EOF
-    sed -i "s|fetch('/api/docs')|fetch('/api/docs-index')|" \
-      "$work/src/components/home/sections/learn-section.tsx"
-  fi
-
   (cd "$work" && bunx next build) || fail "next build شکست خورد."
   [ -f "$work/out/index.html" ] || fail "out/index.html ساخته نشد."
-  rm -rf "$UI_OUT"
-  mkdir -p "$(dirname "$UI_OUT")"
-  cp -a "$work/out" "$UI_OUT"
-  rm -rf "$work"
-  log "UI آماده شد: $UI_OUT ($(du -sh "$UI_OUT" | cut -f1))"
+  UI_SRC="$work/out"
+  UI_WORK="$work"
+  log "UI تازه ساخته شد: $UI_SRC ($(du -sh "$UI_SRC" | cut -f1))"
 }
 
-if [ -f "$UI_OUT/index.html" ]; then
-  log "UI آماده در $UI_OUT (ورودی UI_OUT) — ساخت مجدد لازم نیست."
-else
-  build_ui
-fi
+build_ui
 
 # ----------------------------------------------------------------------------
 # ۲) استیج پوشهٔ برنامهٔ ویندوزی
@@ -159,17 +119,32 @@ fi
 log "استیج $STAGE …"
 rm -rf "$STAGE"
 mkdir -p "$STAGE/ui"
-cp -a "$UI_OUT/." "$STAGE/ui/"
+cp -a "$UI_SRC/." "$STAGE/ui/"
+rm -rf "$UI_WORK"; UI_WORK=""; UI_SRC=""
+log "کپی موقت build UI پاک شد (خروجی تازه وارد $STAGE/ui شد)."
+
+# installer/ — مخزن نصب‌کننده، باندل‌شده کنار exe (v0.3.1 §1). منبع: «درخت
+# کامیت‌شدهٔ» گیت بیرونی (git archive) — همان روش release.sh پس از fold.
+# بستهٔ ویندوزی بدون نصب‌کننده هرگز ساخته نمی‌شود.
+log "بسته‌بندی installer/ از درخت کامیت‌شده (git archive HEAD:headscale-easy-manager) …"
+mkdir -p "$STAGE/installer"
+if ! git -C "$OUTER_DIR" archive HEAD:headscale-easy-manager | tar -x -C "$STAGE/installer"; then
+  fail "git archive HEAD:headscale-easy-manager ناموفق بود — installer/ از درخت کامیت‌شده ساخته نشد."
+fi
+[ -f "$STAGE/installer/install.sh" ] || fail "installer/ در بستهٔ ویندوزی ساخته نشد — بستهٔ بدون نصب‌کننده هرگز ساخته نمی‌شود."
 
 log "کامپایل exe ویندوزی (bun --compile --target=bun-windows-x64) …"
 bun build --compile --target=bun-windows-x64 "$AGENT_DIR/index.ts" \
   --outfile "$STAGE/hem-manager.exe" >/dev/null || fail "کامپایل exe ویندوزی شکست خورد."
 [ -f "$STAGE/hem-manager.exe" ] || fail "hem-manager.exe ساخته نشد."
 
-cat > "$STAGE/README-WINDOWS-FA.txt" <<'EOF'
+# EOF «بدون نقل» عمدی است تا $VERSION تعبیه شود — متن فارسی زیر هیچ $،
+# بک‌تیک یا بک‌اسلش دیگری ندارد (بررسی‌شده). heredocهای PowerShell عمداً
+# نقل‌شده می‌مانند (متغیرهای $env: باید دست‌نخورده به فایل برسند).
+cat > "$STAGE/README-WINDOWS-FA.txt" <<EOF
 ================================================================
   مدیر آسان هداسکیل — Headscale Easy Manager
-  نسخهٔ 0.3.0 — راهنمای سریع ویندوز (فارسی)
+  نسخهٔ $VERSION — راهنمای سریع ویندوز (فارسی)
 ================================================================
 
 این بسته چه چیزی است؟
@@ -181,6 +156,11 @@ cat > "$STAGE/README-WINDOWS-FA.txt" <<'EOF'
 محتویات:
   hem-manager.exe   برنامهٔ اصلی (اجرا مستقیم، بدون نصب)
   ui\               رابط وب فارسی (داخلی — دست نزنید)
+  installer\        مخزن نصب‌کننده (نصب سرور) — کنار برنامه بسته‌بندی شده؛
+                    هنگام ویزارد نصب به سرور آپلود می‌شود و روی سرور در
+                    /tmp/hem-install-<ts> استخراج و در /opt/headscale-easy-manager
+                    نصب می‌شود (مسیرهای لینوکسیِ سرور هیچ‌وقت به ویندوز شما
+                    اشاره نمی‌کنند).
   install.ps1       نصب اختیاری در %LOCALAPPDATA% + میانبر دسکتاپ/منوی استارت
   uninstall.ps1     حذف کامل برنامه از ویندوز
   README-WINDOWS-FA.txt   همین راهنما
@@ -316,6 +296,11 @@ bun build --compile --target=bun-linux-x64 "$AGENT_DIR/index.ts" \
   --outfile "$LINUX_DIR/hem-manager" >/dev/null || fail "کامپایل باینری لینوکسی شکست خورد."
 chmod +x "$LINUX_DIR/hem-manager"
 
+# چیدمان packaged برای باینری لینوکسی هم تکرار می‌شود (v0.3.1 §1) — زنجیرهٔ
+# حلٔ config.ts باید همین‌جا installer/ را پیدا کند، مثل exe ویندوزی روی ویندوز.
+cp -a "$STAGE/installer" "$LINUX_DIR/installer"
+[ -f "$LINUX_DIR/installer/install.sh" ] || fail "installer/ کنار باینری لینوکسی ساخته نشد (packaged layout)."
+
 # سرور SSH آزمایشی باید روشن باشد (127.0.0.1:2222) — اگر نبود، روشنش کن
 started_demo=0
 if ! (ss -tulpn 2>/dev/null | grep -q '127.0.0.1:2222'); then
@@ -354,16 +339,26 @@ chk() { # chk <شرح> <کد موفقیت 0/1>
   if [ "$2" = 0 ]; then log "  [OK]   $1"; else log "  [شکست] $1"; errors=$((errors+1)); fi
 }
 
-# --- ۱) /?token= → Set-Cookie + index.html فارسی
+# --- ۰) چیدمان packaged: installer/ کنار باینری (پیش‌شرط resolution v0.3.1 §1)
+r=0; [ -f "$LINUX_DIR/installer/install.sh" ] || r=1
+chk "installer/ کنار باینری لینوکسی (packaged layout)" $r
+
+# --- ۱) /?token= → 303 + Set-Cookie جلسه‌ای + (پس از ریدایرکت) index.html فارسی
+#     قرارداد v0.3.1 §4: تبادل یک‌بارمصرف — کوکی جلسه‌ای (بدون Max-Age) و
+#     303 به همان مسیر بدون token؛ بازیابی لینک قدیمی دیگر کوکی نمی‌سازد.
 head_root="$(mktemp)"; head_hdr="$(mktemp)"
-curl -s -o "$head_root" -D "$head_hdr" "http://127.0.0.1:$HEM_UI_PORT/?token=$TOKEN" -w '%{http_code}' > "$LINUX_DIR/http_code.txt"
-code="$(cat "$LINUX_DIR/http_code.txt")"
+code="$(curl -s -L -o "$head_root" -D "$head_hdr" "http://127.0.0.1:$HEM_UI_PORT/?token=$TOKEN" -w '%{http_code}')"
 r=0; grep -qi '^set-cookie: *hem_token=' "$head_hdr" || r=1
-chk "GET /?token → Set-Cookie hem_token (HttpOnly)" $r
+grep -qi '^set-cookie: *hem_token=.*max-age' "$head_hdr" && r=1
+chk "GET /?token → 303 + Set-Cookie hem_token جلسه‌ای (HttpOnly، بدون Max-Age)" $r
 r=0; grep -q 'lang="fa"' "$head_root" || r=1; grep -q 'Headscale Easy Manager' "$head_root" || r=1
-chk "GET / → index.html با نشانگر فارسی (lang=fa + title)" $r
+chk "GET / (پس از ریدایرکت 303) → index.html با نشانگر فارسی (lang=fa + title)" $r
 r=0; [ "$code" = 200 ] || r=1
-chk "GET / → HTTP 200 (کد: $code)" $r
+chk "GET / → HTTP 200 پس از 303 (کد نهایی: $code)" $r
+replay_hdr="$(mktemp)"
+curl -s -o /dev/null -D "$replay_hdr" "http://127.0.0.1:$HEM_UI_PORT/?token=$TOKEN"
+r=0; grep -qi '^set-cookie: *hem_token=' "$replay_hdr" && r=1
+chk "بازیابی لینک قدیمی (تاریخچهٔ مرورگر) → بدون Set-Cookie (یک‌بارمصرف)" $r
 
 # --- ۲) assetها با mime درست
 asset_css="$(find "$LINUX_DIR/ui/_next" -name '*.css' | head -1)"
@@ -449,7 +444,15 @@ log "لینوکس : $LINUX_DIR/hem-manager ($(du -h "$LINUX_DIR/hem-manager" | c
 echo
 log "محتویات zip:"
 unzip -l "$ZIP" | sed 's/^/  /'
+# zip باید نصب‌کننده را داشته باشد — بستهٔ بدون نصب‌کننده هرگز «ساخته‌شده» نیست.
+unzip -l "$ZIP" | grep -q "installer/install.sh" \
+  || fail "zip فایل installer/install.sh را ندارد — بستهٔ بدون نصب‌کننده هرگز ساخته نمی‌شود."
 echo
+
+# پاک‌سازی کش منسوخ (v0.3.1 §1): ui-out دیگر نه ورودی است نه خروجی؛
+# UI همیشه تازه ساخته می‌شود. این پوشه در گیت ignore است.
+rm -rf "$AGENT_DIR/ui-out"
+log "پوشهٔ کهنهٔ ui-out (کش منسوخ) حذف شد."
 log "صادقانه: exe ویندوزی cross-compile از همین سورس است و در این لینوکس‌باکس"
 log "قابل اجرا نیست؛ «باینری لینوکسیِ همان سورس» به‌صورت زنده راستی‌آزمایی شد"
 log "(UI، توکن/کوکی، اتصال TOFU و exec واقعی SSH). آزمون روی خودِ ویندوز باید"

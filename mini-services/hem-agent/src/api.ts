@@ -49,6 +49,7 @@ import { createBackupRouter, createRestoreRouter } from "./backupctl";
 import { createConsoleRouter } from "./console";
 import { createInstallRouter } from "./installer";
 import { createUpdateRouter } from "./updatectl";
+import { timingSafeTokenMatch } from "./tokenmatch";
 import type { ServiceActionName } from "./types";
 
 export interface AppDeps {
@@ -123,20 +124,43 @@ export function createApp(deps: AppDeps): Express {
     res.status(401).json({ ok: false, error: "UNAUTHORIZED", message: "هدر X-HEM-Token موجود یا معتبر نیست." });
   });
 
-  // حالت دسکتاپ: GET با ?token=<درست> → Set-Cookie hem_token (HttpOnly).
-  // فقط وقتی مقدار با توکن agent یکی باشد؛ مقدار نادرست نادیده گرفته می‌شود
-  // (کوکی جعلی ساخته نمی‌شود؛ درخواست‌های بعدی بدون توکن معتبر همان 401 می‌گیرند).
-  if (deps.token) {
+  // ── تبادل یک‌بارمصرف ?token= → کوکی جلسه‌ای (v0.3.1 §4) ──────────────────
+  // نشت توکن در URL/لاگ/تاریخچهٔ مرورگر: مقدار ?token فقط «یک بار» قابل
+  // تبادل است — پس از اولین استفاده، لینک‌های قدیمی (تاریخچهٔ مرورگر/لاگ‌ها)
+  // دیگر هیچ کوکی‌ای نمی‌سازند. تبادل فقط روی مسیرهای UI انجام می‌شود، نه
+  // /api (احراز هویت API فقط هدر/کوکی است؛ token در query هیچ‌وقت معتبر نیست).
+  // کوکی «جلسه‌ای» است (بدون Max-Age؛ با بستن مرورگر می‌میرد)، HttpOnly و
+  // SameSite=Strict. پس از تبادل، 303 به همان مسیر «بدون token» می‌فرستیم
+  // (نوار آدرس تمیز می‌شود؛ پارامترهای دیگر کوئری مثل XTransformPort حفظ می‌شوند).
+  let bootstrapConsumed = false;
+  if (deps.token && deps.token.length > 0) {
     app.use((req, res, next) => {
+      if (req.method !== "GET" || req.path.startsWith("/api")) {
+        next();
+        return;
+      }
       const q = req.query.token;
       const provided = typeof q === "string" ? q : undefined;
-      if (provided && provided === deps.token && req.method === "GET") {
-        res.setHeader(
-          "Set-Cookie",
-          `hem_token=${provided}; Path=/; HttpOnly; SameSite=Strict; Max-Age=86400`,
-        );
+      if (
+        !provided ||
+        bootstrapConsumed ||
+        !timingSafeTokenMatch(provided, deps.token)
+      ) {
+        // مقدار نادرست یا مصرف‌شده: نادیده گرفته می‌شود — کوکی جعلی ساخته
+        // نمی‌شود؛ درخواست‌های بعدی بدون توکن معتبر همان 401 می‌گیرند.
+        next();
+        return;
       }
-      next();
+      bootstrapConsumed = true;
+      res.setHeader("Set-Cookie", `hem_token=${provided}; Path=/; HttpOnly; SameSite=Strict`);
+      const kept = new URLSearchParams();
+      for (const [k, v] of Object.entries(req.query)) {
+        if (k === "token" || v === undefined) continue;
+        const val = Array.isArray(v) ? v[0] : v;
+        if (typeof val === "string" && val !== "") kept.append(k, val);
+      }
+      const qs = kept.toString();
+      res.redirect(303, qs ? `${req.path}?${qs}` : req.path);
     });
   }
 
@@ -796,17 +820,17 @@ function maskProfileSecrets(p: unknown): unknown {
   return p;
 }
 
-/** توکن درخواست: هدر X-HEM-Token یا کوکی hem_token — با توکن مورد انتظار یکی است؟ */
+/** توکن درخواست: هدر X-HEM-Token یا کوکی hem_token — با توکن مورد انتظار یکی است؟ (timing-safe) */
 function requestTokenMatches(req: Request, expected: string): boolean {
   const header = req.headers["x-hem-token"];
   const headerVal = Array.isArray(header) ? header[0] : header;
   if (typeof headerVal === "string" && headerVal.length > 0) {
-    return headerVal === expected;
+    return timingSafeTokenMatch(headerVal, expected);
   }
   const cookieHeader = req.headers.cookie;
   if (typeof cookieHeader === "string") {
     const m = /(?:^|;\s*)hem_token=([^;\s]+)/.exec(cookieHeader);
-    if (m && m[1] === expected) return true;
+    if (m && m[1]) return timingSafeTokenMatch(m[1], expected);
   }
   return false;
 }

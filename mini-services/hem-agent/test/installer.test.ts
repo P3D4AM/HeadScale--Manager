@@ -1,9 +1,12 @@
 // تست جریان نصب (قرارداد §8) — prepare/validate/execute/state روی سرور SSH آزمایشی واقعی.
-// مخزن پایتون واقعی (HEM_PROJECT_ROOT) بارگذاری می‌شود و dry-run واقعی install.sh اجرا
+// مخزن پایتون واقعی (از زنجیرهٔ حلٔ v0.3.1 §1: HEM_PROJECT_ROOT → installer/ کنار
+// فایل اجرایی → checkout توسعه) بارگذاری می‌شود و dry-run واقعی install.sh اجرا
 // می‌شود — هیچ خروجی جعلی در کار نیست. اجرای واقعی نصب روی سرور تست (بدون sudo)
 // باید صادقانه با SUDO_REQUIRED شکست بخورد؛ این «رفتار درست» است.
 import { afterAll, beforeAll, expect, test } from "bun:test";
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import * as os from "node:os";
+import * as path from "node:path";
 import { io, type Socket } from "socket.io-client";
 import { startTestServer, TEST_HOST, TEST_PASSWORD, type TestServerHandle } from "./server";
 import {
@@ -15,8 +18,16 @@ import {
 } from "./helpers";
 import { PLAN_INPUTS, renderAnswersConf, validateSettings } from "../src/installer";
 import { detectFinalState, parseStepLine } from "../src/jobstream";
+import {
+  installerRootCandidates,
+  installerRootErrorMessage,
+  installerRootStatus,
+  projectRoot,
+  resolveInstallerRoot,
+} from "../src/config";
 
-const PROJECT_ROOT = process.env.HEM_PROJECT_ROOT || "/home/z/my-project/headscale-easy-manager";
+// v0.3.1 §1: بدون پیش‌فرضِ توسعه‌دهنده — از زنجیرهٔ حل (env → packaged → dev) می‌آید.
+const PROJECT_ROOT = projectRoot();
 const hsPrefix = "/tmp/hs-bin/headscale --config /home/z/hs-test/config.yaml";
 
 let ts: TestServerHandle;
@@ -288,4 +299,174 @@ test("state: بدون نصب → exists:false صادقانه", async () => {
   expect(status).toBe(200);
   expect(body.ok).toBe(true);
   expect(body.exists).toBe(false);
+});
+
+// ---------------------------------------------------------------------------
+// v0.3.1 §1 — زنجیرهٔ حلٔ ریشهٔ نصب‌کننده (خالص؛ بدون وابستگی به checkout سندباکس)
+// ---------------------------------------------------------------------------
+const FORBIDDEN_DEV_DEFAULT = "/home/z/my-project/headscale-easy-manager";
+
+/** پوشهٔ موقت با install.sh — کاندید «معتبر» برای env */
+function mkValidRoot(): string {
+  const d = mkdtempSync(path.join(os.tmpdir(), "hem-valid-root-"));
+  writeFileSync(path.join(d, "install.sh"), "#!/bin/bash\n# نشان تست\n");
+  return d;
+}
+
+/** پوشهٔ exe ساختگی که installer/ کنارش هست — کاندید packaged معتبر */
+function mkValidExeDir(): string {
+  const d = mkdtempSync(path.join(os.tmpdir(), "hem-valid-exe-"));
+  mkdirSync(path.join(d, "installer"), { recursive: true });
+  writeFileSync(path.join(d, "installer", "install.sh"), "#!/bin/bash\n# نشان تست\n");
+  return d;
+}
+
+/** checkout ساختگی: <base>/a/b/src + مخزن در <base>/headscale-easy-manager */
+function mkValidSrcDir(): { src: string; repo: string } {
+  const base = mkdtempSync(path.join(os.tmpdir(), "hem-valid-src-"));
+  const src = path.join(base, "a", "b", "src");
+  mkdirSync(src, { recursive: true });
+  const repo = path.join(base, "headscale-easy-manager");
+  mkdirSync(repo);
+  writeFileSync(path.join(repo, "install.sh"), "#!/bin/bash\n# نشان تست\n");
+  return { src, repo };
+}
+
+test("§1: با ورودی‌های تمیز، هیچ کاندیدی مسیر ممنوعِ پیش‌فرضِ توسعه نیست", () => {
+  const created: string[] = [];
+  try {
+    const exe = mkdtempSync(path.join(os.tmpdir(), "hem-clean-exe-"));
+    created.push(exe);
+    const base = mkdtempSync(path.join(os.tmpdir(), "hem-clean-src-"));
+    created.push(base);
+    const src = path.join(base, "a", "b", "src");
+    mkdirSync(src, { recursive: true });
+
+    const cands = installerRootCandidates(undefined, exe, src);
+    expect(cands.map((c) => c.source)).toEqual(["packaged", "dev"]);
+    for (const c of cands) {
+      // اگر کسی پیش‌فرض هاردکد را برگرداند، اینجا قرمز می‌شود:
+      expect(c.path).not.toBe(FORBIDDEN_DEV_DEFAULT);
+      expect(c.path.startsWith("/home/z/")).toBe(false);
+    }
+    // env خالی/فقط-فاصله کاندید env نمی‌سازد
+    expect(installerRootCandidates("", exe, src).some((c) => c.source === "env")).toBe(false);
+    expect(installerRootCandidates("   ", exe, src).some((c) => c.source === "env")).toBe(false);
+  } finally {
+    for (const d of created) rmSync(d, { recursive: true, force: true });
+  }
+});
+
+test("§1: اولویت زنجیره — env > packaged > dev؛ نخستین کاندیدِ دارای install.sh برنده است", () => {
+  const created: string[] = [];
+  try {
+    const env = mkValidRoot();
+    created.push(env);
+    const exe = mkValidExeDir();
+    created.push(exe);
+    const { src, repo } = mkValidSrcDir();
+    created.push(repo);
+
+    // هر سه معتبر → env (صریح) برنده است
+    expect(resolveInstallerRoot(installerRootCandidates(env, exe, src))).toMatchObject({
+      ok: true,
+      source: "env",
+      path: path.resolve(env),
+    });
+    // بدون env → packaged (کنار فایل اجرایی)
+    expect(resolveInstallerRoot(installerRootCandidates(undefined, exe, src))).toMatchObject({
+      ok: true,
+      source: "packaged",
+      path: path.join(exe, "installer"),
+    });
+    // env نامعتبر (install.sh نیست) → صادقانه در tried ثبت و پرش به packaged
+    const envBad = mkdtempSync(path.join(os.tmpdir(), "hem-bad-env-"));
+    created.push(envBad);
+    const st = resolveInstallerRoot(installerRootCandidates(envBad, exe, src));
+    expect(st.source).toBe("packaged");
+    expect(st.tried[0]).toMatchObject({ source: "env", exists: false });
+    // فقط dev معتبر → dev برنده است
+    const exeBad = mkdtempSync(path.join(os.tmpdir(), "hem-bad-exe-"));
+    created.push(exeBad);
+    expect(resolveInstallerRoot(installerRootCandidates(undefined, exeBad, src)).source).toBe("dev");
+  } finally {
+    for (const d of created) rmSync(d, { recursive: true, force: true });
+  }
+});
+
+test("§1: هیچ کاندید معتبری نیست → source:none و projectRoot همان «انتظارِ packaged» است", () => {
+  const created: string[] = [];
+  try {
+    const envBad = mkdtempSync(path.join(os.tmpdir(), "hem-none-env-"));
+    created.push(envBad);
+    const exeDir = mkdtempSync(path.join(os.tmpdir(), "hem-none-exe-"));
+    created.push(exeDir);
+    const srcBase = mkdtempSync(path.join(os.tmpdir(), "hem-none-src-"));
+    created.push(srcBase);
+    const src = path.join(srcBase, "a", "b", "src");
+    mkdirSync(src, { recursive: true });
+
+    const st = resolveInstallerRoot(installerRootCandidates(envBad, exeDir, src));
+    expect(st.ok).toBe(false);
+    expect(st.source).toBe("none");
+    expect(st.tried.map((t) => t.source)).toEqual(["env", "packaged", "dev"]);
+    expect(st.tried.every((t) => t.exists === false)).toBe(true);
+    expect(st.tried.map((t) => t.path)).toEqual([
+      path.resolve(envBad),
+      path.join(exeDir, "installer"),
+      path.resolve(src, "..", "..", "..", "headscale-easy-manager"),
+    ]);
+    // «انتظارِ packaged» — تماس‌گیرنده با همین مسیر خطای واضح می‌گیرد
+    expect(st.path).toBe(path.join(exeDir, "installer"));
+  } finally {
+    for (const d of created) rmSync(d, { recursive: true, force: true });
+  }
+});
+
+test("§1: در باینری کامپایل‌شده (/$bunfs) کاندید dev وجود ندارد و پیام دلیل را می‌گوید", () => {
+  const cands = installerRootCandidates(undefined, "/opt/fake-exe", "/$bunfs/root/mini-services/hem-agent/src");
+  expect(cands.map((c) => c.source)).toEqual(["packaged"]);
+  expect(cands[0].path).toBe("/opt/fake-exe/installer");
+
+  const msg = installerRootErrorMessage(
+    resolveInstallerRoot(cands, [{ source: "dev", reason: "دلیل تست: باینری کامپایل‌شده" }]),
+  );
+  expect(msg).toContain("تنظیم نشده"); // env تنظیم نشده
+  expect(msg).toContain("دلیل تست: باینری کامپایل‌شده"); // علت ردشدن dev
+  expect(msg).toContain("/opt/fake-exe/installer");
+});
+
+test("§1: پیام «مخزن پیدا نشد» همهٔ مسیرها را با نتیجه فهرست می‌کند و راه‌حل می‌دهد", () => {
+  const created: string[] = [];
+  try {
+    const envBad = mkdtempSync(path.join(os.tmpdir(), "hem-msg-env-"));
+    created.push(envBad);
+    const exeDir = mkdtempSync(path.join(os.tmpdir(), "hem-msg-exe-"));
+    created.push(exeDir);
+    const srcBase = mkdtempSync(path.join(os.tmpdir(), "hem-msg-src-"));
+    created.push(srcBase);
+    const src = path.join(srcBase, "a", "b", "src");
+    mkdirSync(src, { recursive: true });
+
+    const st = resolveInstallerRoot(installerRootCandidates(envBad, exeDir, src));
+    const msg = installerRootErrorMessage(st);
+    expect(msg).toContain("ویزارد نصب متوقف می‌شود");
+    expect(msg).toContain("هرگز «آماده» اعلام نمی‌شود");
+    expect(msg).toContain("HEM_PROJECT_ROOT");
+    expect(msg).toContain(path.resolve(envBad));
+    expect(msg).toContain(path.join(exeDir, "installer"));
+    expect(msg).toContain("install.sh نیست");
+    expect(msg).toContain("build-windows.sh");
+    expect(msg).toContain("مسیر مورد انتظار بسته");
+  } finally {
+    for (const d of created) rmSync(d, { recursive: true, force: true });
+  }
+});
+
+test("§1 (checkout موجود): زنجیرهٔ واقعی همین اجرا مخزن را پیدا می‌کند و projectRoot معتبر است", () => {
+  const st = installerRootStatus();
+  expect(st.ok).toBe(true);
+  expect(st.source).not.toBe("none");
+  expect(existsSync(path.join(st.path, "install.sh"))).toBe(true);
+  expect(projectRoot()).toBe(st.path);
 });
