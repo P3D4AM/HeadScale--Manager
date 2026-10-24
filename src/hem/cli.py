@@ -76,6 +76,7 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--config", metavar="FILE", help="فایل پاسخ‌های نصب (YAML)")
     p.add_argument("--non-interactive", action="store_true", help="حالت خودکار بدون پرسش")
     p.add_argument("--dry-run", action="store_true", help="فقط نمایش، بدون اعمال")
+    p.add_argument("--yes", action="store_true", help="تأیید صریح برنامه تغییرات — در حالت غیرتعاملی الزامی است")
     p.add_argument("--install-dir", default=C.DEFAULT_INSTALL_DIR, metavar="DIR", help="مسیر نصب ابزار")
     p.set_defaults(handler=cmd_install)
 
@@ -258,6 +259,7 @@ def cmd_install(args) -> int:
             non_interactive=args.non_interactive,
             dry_run=args.dry_run,
             install_dir=args.install_dir,
+            assume_yes=args.yes,
         )
         return flow.run()
     except ValueError as exc:  # خطای فایل پیکربندی
@@ -932,7 +934,12 @@ def main(argv=None) -> int:
     if getattr(args, "non_interactive", False):
         set_non_interactive(True)
 
-    if args.command in ROOT_REQUIRED and os.geteuid() != 0:
+    # استثنا: «install --dry-run» فقط برنامه‌ریزیِ فقط-خواندنی است؛ الزام root
+    # برداشته می‌شود (نصب واقعی همچنان به sudo نیاز دارد — کد ۳).
+    _dryrun_install = args.command == "install" and getattr(args, "dry_run", False)
+    if _dryrun_install and os.geteuid() != 0:
+        print("⚠ [dry-run] بدون root اجرا می‌شود — فقط برنامه‌ریزی است؛ برای نصب واقعی sudo لازم است.")
+    if args.command in ROOT_REQUIRED and os.geteuid() != 0 and not _dryrun_install:
         print(f"✗ {fmt('need_root')}")
         print(fmt("need_root_hint", command=args.command))
         return C.EXIT_NEED_ROOT

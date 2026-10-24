@@ -9,7 +9,18 @@
 #     sudo ./install.sh --config /path/hem.conf  # حالت خودکار
 #     sudo ./install.sh --dry-run                # نمایش بدون اعمال
 #
-#  کد خروج: 0 موفق | 1 خطا | 2 ورودی نامعتبر
+#  دربارهٔ --dry-run (برنامه‌ریزی فقط-خواندنی):
+#     • منطق اصلی واقعاً اجرا می‌شود (hsctl واقعی از «پوشهٔ سورس» کنار همین
+#       فایل — نه از INSTALL_DIR که در dry-run کپی نمی‌شود) و خروجیِ آن دقیقاً
+#       همان چیزی است که در اجرای واقعی «انجام می‌شود».
+#     • هیچ فایلی ساخته/تغییر نمی‌یابد (نه /opt، نه /usr/local/bin، نه پیکربندی‌ها).
+#     • الزام root «اعمال نمی‌شود»؛ dry-run فقط برنامه‌ریزی/اعتبارسنجی است.
+#       برای نصب واقعی همچنان sudo لازم است (بدون root کد ۳).
+#     • کد خروج واقعی hsctl عیناً منتشر می‌شود؛ خطای برنامه‌ریزی/اعتبارسنجی
+#       با همان کد اعلام می‌شود (فرو داده نمی‌شود).
+#
+#  کد خروج: 0 موفق | 1 خطا | 2 ورودی نامعتبر | 3 نیاز به root (نصب واقعی)
+#            | کد خروج واقعی hsctl در صورت خطای نصب
 # ============================================================================
 set -euo pipefail
 
@@ -43,7 +54,7 @@ while [[ $# -gt 0 ]]; do
         --non-interactive) EXTRA_ARGS+=("--non-interactive"); shift ;;
         --install-dir)    INSTALL_DIR="${2:?--install-dir نیاز به مسیر دارد}"; shift 2 ;;
         -h|--help)
-            sed -n '2,12p' "$0"; exit 0 ;;
+            sed -n '2,23p' "$0"; exit 0 ;;
         *) EXTRA_ARGS+=("$1"); shift ;;
     esac
 done
@@ -55,13 +66,17 @@ printf '%s\n' "محصول: ${BOLD}${PRODUCT_NAME}${RESET} (نصب‌کننده �
 printf '%s\n' "ابتدا بررسی می‌کنم که سرور آماده نصب باشد…"
 printf '%s\n' ""
 
-# --- ۱) بررسی root (نصب سرویس سیستمی نیاز به root دارد) --------------------
-if [[ ${EUID} -ne 0 ]]; then
+# --- ۱) بررسی root -----------------------------------------------------------
+# نصب واقعی به root نیاز دارد (کد ۳). dry-run فقط برنامه‌ریزیِ فقط-خواندنی است
+# و بدون root هم باید کامل اجرا شود (به پیام «sudo ./install.sh --dry-run» بسنده کنید).
+if [[ ${EUID} -ne 0 && $DRY_RUN -eq 0 ]]; then
     warn "این اسکریپت با root اجرا نشده است. با sudo اجرا کنید:"
     printf '    sudo %s\n' "$0"
     printf '%s\n' "اگر فقط می‌خواهید مستندات را بخوانید، لازم به root نیست:"
     printf '    ./hsctl learn list\n'
     exit 3
+elif [[ ${EUID} -ne 0 ]]; then
+    msg "[dry-run] بدون root اجرا می‌شود — فقط برنامه‌ریزی است؛ برای نصب واقعی sudo لازم است."
 fi
 
 # --- ۲) بررسی سیستم‌عامل ----------------------------------------------------
@@ -100,9 +115,16 @@ fi
 read -r _ AVAIL_MB _ < <(df -Pm / | awk 'NR==2 {print $2, $4, $5}')
 msg "فضای آزاد پارتیشن ریشه: $((AVAIL_MB / 1024)) گیگابایت"
 if (( AVAIL_MB < MIN_DISK_MB )); then
-    die "فضای آزاد کافی نیست (حداقل ${MIN_DISK_MB} مگابایت لازم است، اکنون ${AVAIL_MB} مگابایت موجود است). فایل‌های غیرلازم را پاک کنید یا دیسک را بزرگ کنید."
+    if [[ $DRY_RUN -eq 1 ]]; then
+        # در dry-run برنامه‌ریزی کامل می‌ماند؛ نتیجهٔ بررسی صادقانه اعلام می‌شود.
+        warn "فضای آزاد کافی نیست (حداقل ${MIN_DISK_MB} مگابایت لازم است، اکنون ${AVAIL_MB} مگابایت موجود است)."
+        warn "[dry-run] ادامه می‌دهیم؛ در نصب واقعی در همین‌جا با خطا متوقف می‌شویم."
+    else
+        die "فضای آزاد کافی نیست (حداقل ${MIN_DISK_MB} مگابایت لازم است، اکنون ${AVAIL_MB} مگابایت موجود است). فایل‌های غیرلازم را پاک کنید یا دیسک را بزرگ کنید."
+    fi
+else
+    ok "فضای دیسک کافی است."
 fi
-ok "فضای دیسک کافی است."
 
 # --- ۴) بررسی/نصب Python و پیش‌نیازها ----------------------------------------
 if ! command -v python3 >/dev/null 2>&1; then
@@ -137,10 +159,11 @@ fi
 # --- ۵) کپی پروژه به مسیر نصب ------------------------------------------------
 SRC_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 if [[ "$SRC_DIR" != "$INSTALL_DIR" ]]; then
-    msg "کپی فایل‌های پروژه به ${INSTALL_DIR} …"
     if [[ $DRY_RUN -eq 1 ]]; then
-        warn "[dry-run] کپی انجام نشد: ${SRC_DIR} → ${INSTALL_DIR}"
+        # در dry-run چیزی کپی نمی‌شود؛ hsctl واقعی از پوشهٔ سورس اجرا می‌شود (بخش ۷)
+        warn "[dry-run] کپی انجام نشد: در نصب واقعی ${SRC_DIR} → ${INSTALL_DIR} کپی می‌شود."
     else
+        msg "کپی فایل‌های پروژه به ${INSTALL_DIR} …"
         mkdir -p "$INSTALL_DIR"
         # از rsync/cp فقط برای فایل‌های پروژه؛ پشتیبان‌گیری از نسخه قبلی
         if [[ -d "$INSTALL_DIR/src" ]]; then
@@ -164,19 +187,27 @@ printf '%s\n' ""
 msg "اجرای نصب‌کننده اصلی (${CLI_NAME} install) …"
 printf '%s\n' "────────────────────────────────────────────────────────────"
 if [[ $DRY_RUN -eq 1 ]]; then
-    # در حالت dry-run منطق اصلی هم dry-run می‌شود
-    python3 "${INSTALL_DIR}/hsctl" install --dry-run ${CONFIG_FILE:+--config "$CONFIG_FILE"} "${EXTRA_ARGS[@]}" || true
+    # hsctl «واقعی» از پوشهٔ سورس اجرا می‌شود — INSTALL_DIR در dry-run کپی نشده است.
+    # کد خروج واقعی منتشر می‌شود؛ هیچ خطایی فرو داده نمی‌شود (|| true حذف شد).
+    RC=0
+    python3 "${SRC_DIR}/hsctl" install --dry-run ${CONFIG_FILE:+--config "$CONFIG_FILE"} "${EXTRA_ARGS[@]}" || RC=$?
     printf '%s\n' "────────────────────────────────────────────────────────────"
-    warn "[dry-run] هیچ تغییری واقعاً اعمال نشد."
+    if [[ $RC -ne 0 ]]; then
+        fail "[dry-run] برنامه‌ریزی/اعتبارسنجی ناموفق بود (کد ${RC}) — در نصب واقعی هم همین اتفاق می‌افتد."
+        exit "$RC"
+    fi
+    warn "[dry-run] هیچ تغییری واقعاً اعمال نشد؛ خروجی بالا دقیقاً همان چیزی است که در نصب واقعی انجام می‌شود."
     exit 0
 fi
 
-python3 "${INSTALL_DIR}/hsctl" install ${CONFIG_FILE:+--config "$CONFIG_FILE"} "${EXTRA_ARGS[@]}"
-RC=$?
+# نصب واقعی — از INSTALL_DIR (که در بخش ۵ کپی شده) اجرا می‌شود.
+# الگوی «cmd || RC=$؟» تضمین می‌کند با set -e پیام خطا و کد خروج واقعی هر دو منتشر شوند.
+RC=0
+python3 "${INSTALL_DIR}/hsctl" install ${CONFIG_FILE:+--config "$CONFIG_FILE"} "${EXTRA_ARGS[@]}" || RC=$?
 printf '%s\n' "────────────────────────────────────────────────────────────"
-if [[ $RC -eq 0 ]]; then
-    ok "نصب کامل شد! برای شروع: ${CLI_NAME} status   |   آموزش: ${CLI_NAME} learn list"
-else
+if [[ $RC -ne 0 ]]; then
     fail "نصب‌کننده با کد ${RC} متوقف شد. برای عیب‌یابی اجرا کنید: ${CLI_NAME} doctor"
+    exit "$RC"
 fi
-exit $RC
+ok "نصب کامل شد! برای شروع: ${CLI_NAME} status   |   آموزش: ${CLI_NAME} learn list"
+exit 0

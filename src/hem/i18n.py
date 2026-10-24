@@ -23,6 +23,10 @@ MSG: dict[str, str] = {
         "پاسخ‌ها را در فایل پیکربندی YAML بدهید و با «--config FILE --non-interactive» اجرا کنید. "
         "نمونه فایل: examples/hem-install.conf.example"
     ),
+    "need_explicit_yes": (
+        "در حالت غیرتعاملی، اجرای برنامهٔ تغییرات نیازمند --yes صریح است "
+        "(وجود فایل پیکربندی رضایت ضمنی نیست)."
+    ),
     "command_failed": "اجرای دستور «{command}» ناموفق بود (کد خروج {code}).",
     "command_missing": "برنامه «{name}» روی سیستم یافت نشد.",
     "command_timeout": "مهلت {timeout} ثانیه‌ای اجرای دستور «{command}» به پایان رسید.",

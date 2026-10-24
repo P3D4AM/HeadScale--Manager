@@ -28,11 +28,12 @@ from hem.system import firewall, packages, preflight, services
 
 logger = hemlog.get("flow")
 
-# گام‌های ۱۷گانه به‌ترتیب مأموریت
+# گام‌های ۱۷گانه به‌ترتیب مأموریت — جمع‌آوری و اعتبارسنجی پاسخ‌ها «قبل از» نمایش
+# برنامه و تأیید (گام plan همیشه پاسخ‌های واقعی در اختیار دارد).
 STEP_ORDER = [
-    "welcome", "preflight", "prereq", "resources", "detect_services", "plan",
-    "gather", "validate", "packages", "headscale", "configure", "dns_https",
-    "firewall", "start", "health", "report", "next_steps",
+    "welcome", "preflight", "prereq", "resources", "detect_services",
+    "gather", "validate", "plan", "packages", "headscale", "configure",
+    "dns_https", "firewall", "start", "health", "report", "next_steps",
 ]
 
 STEP_TITLES = {
@@ -55,12 +56,23 @@ STEP_TITLES = {
     "next_steps": "گام‌های بعدی شما",
 }
 
-# گام‌های قابل پرش در حالت resume (بدون عارضه جانبی مهم)
-RESUME_SKIP = {"welcome", "preflight", "prereq", "resources", "gather", "plan"}
+# گام‌های قابل پرش در حالت resume (بدون عارضه جانبی مهم) — جمع‌آوری/اعتبارسنجی
+# و خودِ تأیید برنامه عارضه‌ای ندارند؛ در resume با ثبت ok پرش می‌خورند.
+RESUME_SKIP = {"welcome", "preflight", "prereq", "resources", "gather", "validate", "plan"}
 
 
 class InstallCancelled(RuntimeError):
     """کاربر نصب را لغو کرد."""
+
+
+class PlanConsentError(RuntimeError):
+    """در حالت غیرتعاملی، تأیید اجرای برنامه فقط با --yes صریح ممکن است.
+
+    وجود فایل پیکربندی رضایت ضمنی نیست؛ کد خروج قراردادی EXIT_NO_CONFIRM است.
+    """
+
+    def __init__(self, message: str | None = None):
+        super().__init__(message or fmt("need_explicit_yes"))
 
 
 @dataclass
@@ -118,11 +130,16 @@ class InstallFlow:
     """اجرای کل جریان نصب با ۱۷ گام."""
 
     def __init__(self, config_file: str | None = None, non_interactive: bool = False,
-                 dry_run: bool = False, install_dir: str = C.DEFAULT_INSTALL_DIR):
+                 dry_run: bool = False, install_dir: str = C.DEFAULT_INSTALL_DIR,
+                 assume_yes: bool = False):
         self.config_file = config_file
         self.non_interactive = non_interactive
         self.dry_run = dry_run
         self.install_dir = install_dir
+        # تأیید صریح برنامه تغییرات (--yes) — در غیرتعاملی تنها راهِ رضایت است.
+        self.assume_yes = assume_yes
+        # پرچم «نبودِ رضایت صریح در گام plan» — در run() به کد EXIT_NO_CONFIRM تبدیل می‌شود.
+        self.plan_consent_missing = False
         self.state = StateManager()
         self.answers: InstallAnswers | None = None
         self.resources: dict = {}
@@ -190,6 +207,10 @@ class InstallFlow:
                 self.state.mark(name, "failed" if runner.steps[-1].status == "failed" else "needs_action")
                 if not self.dry_run:
                     self._safe_save_state()
+                # مرز تأیید برنامه (plan): نبودِ رضایت صریح = لغو (کد ۵) نه خطای سیستمی.
+                # پیام فارسی خودش توسط runner چاپ شده است؛ اینجا فقط کد خروج درست می‌شود.
+                if name == "plan" and self.plan_consent_missing:
+                    return C.EXIT_NO_CONFIRM
                 break
         except InstallCancelled:
             print(fmt("install_cancelled"))
@@ -325,7 +346,11 @@ class InstallFlow:
 
         problems = []
         if not is_root():
-            problems.append("اجرای بدون root — با sudo اجرا کنید.")
+            if self.dry_run:
+                # dry-run فقط برنامه‌ریزی است؛ در نصب واقعی همچنان root الزامی است.
+                print("  [dry-run] اجرا بدون root — برای نصب واقعی sudo لازم است (اینجا فقط برنامه‌ریزی است).")
+            else:
+                problems.append("اجرای بدون root — با sudo اجرا کنید.")
         if sys.version_info < C.MIN_PYTHON:
             problems.append(f"پایتون {sys.version.split()[0]} قدیمی است (حداقل ۳.۱۰).")
         try:
@@ -379,9 +404,16 @@ class InstallFlow:
         return "بدون تداخل پورت."
 
     def _step_plan(self, step: Step) -> str:
-        """گام ۶: نمایش برنامه تغییرات و تأیید کاربر."""
+        """گام ۸: نمایش برنامه تغییرات و تأیید کاربر.
+
+        همیشه بعد از gather اجرا می‌شود؛ پس پاسخ‌های واقعی در اختیار است
+        (هک پیش‌نمایش `_load_or_gather_for_plan` حذف شد).
+        """
         if self.answers is None:
-            self._load_or_gather_for_plan()
+            # محافظ: gather همیشه قبل از plan است؛ این شاخه نباید رخ دهد.
+            raise NeedsActionError(
+                "پاسخ‌های نصب قبل از نمایش برنامه باید جمع‌آوری شده باشند (گام gather)."
+            )
         ans = self.answers
         lines = ["برنامه تغییرات:"]
         pkgs = ["sqlite3", "curl"]
@@ -408,23 +440,21 @@ class InstallFlow:
         if self.existing.get("headscale", {}).get("package"):
             lines.append("  ⚠ بسته headscale از قبل نصب است — همین نسخه/دوباره نصب می‌شود و داده‌ها می‌مانند.")
         print("\n".join(lines))
-        if not confirm("\nبرنامه بالا اجرا شود؟", default=False):
+        # تأیید برنامه — مرز رضایت صریح:
+        if self.assume_yes:
+            # رضایت صریح --yes (در هر دو حالت تعاملی/غیرتعاملی معتبر است)
+            print("  ✓ برنامه با تأیید صریح (--yes) پذیرفته شد.")
+        elif self.non_interactive:
+            # بدون --yes صریح، اجرای برنامه در حالت غیرتعاملی مجاز نیست؛
+            # وجود فایل پیکربندی رضایت ضمنی نیست.
+            self.plan_consent_missing = True
+            raise PlanConsentError()
+        elif not confirm("\nبرنامه بالا اجرا شود؟", default=False):
             raise InstallCancelled()
         return "تأیید شد."
 
-    def _load_or_gather_for_plan(self) -> None:
-        """بارگذاری پاسخ‌ها برای گام برنامه (فایل/حالت موجود)."""
-        if self.config_file:
-            self.answers = load_from_file(self.config_file)
-        else:
-            # در حالت تعاملی، پاسخ‌ها در گام gather پرسیده می‌شوند؛ برای plan یک پیش‌نمایش لازم است
-            if self.state.data.get("answers_summary"):
-                self.answers = InstallAnswers(**self.state.data["answers_summary"])
-            else:
-                self.answers = InstallAnswers()
-
     def _step_gather(self, step: Step) -> str:
-        """گام ۷: جمع‌آوری پاسخ‌ها (فایل پیکربندی یا تعاملی)."""
+        """گام ۶: جمع‌آوری پاسخ‌ها (فایل پیکربندی یا تعاملی) — قبل از plan."""
         if self.config_file:
             self.answers = load_from_file(self.config_file)
             print(f"  پاسخ‌ها از فایل خوانده شد: {self.config_file}")
@@ -450,7 +480,7 @@ class InstallFlow:
         return f"دامنه: {self.answers.domain}"
 
     def _step_validate(self, step: Step) -> str:
-        """گام ۸: اعتبارسنجی DNS دامنه."""
+        """گام ۷: اعتبارسنجی DNS دامنه — قبل از plan."""
         ans = self.answers
         result = dnscheck.check_domain(ans.domain, self.resources.get("ips") or net_ips.server_addresses()[0])
         print(f"  {result.advice}")

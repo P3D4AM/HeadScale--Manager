@@ -97,7 +97,19 @@ def inject_site_block(domain: str, caddyfile_path=None, dry_run: bool = False) -
     """
     path = Path(caddyfile_path or get_caddyfile_path())
     block = build_site_block(domain)
-    existing = path.read_text(encoding="utf-8", errors="replace") if path.exists() else ""
+    try:
+        existing = path.read_text(encoding="utf-8", errors="replace") if path.exists() else ""
+    except PermissionError:
+        if dry_run:
+            # dry-run فقط برنامه‌ریزی است و بدون root اجرا می‌شود؛
+            # اگر Caddyfile فعلی قابل خواندن نباشد، صادقانه اعلام می‌شود
+            # (در اجرای واقعی با root خوانده و بلوک idempotent به‌روزرسانی می‌شود).
+            print(
+                f"[dry-run] {path} بدون root قابل خواندن نیست — "
+                "در اجرای واقعی (با root) بلوک سایت خوانده و به‌روزرسانی می‌شود."
+            )
+            return True
+        raise
 
     if C.CADDY_BLOCK_BEGIN in existing and C.CADDY_BLOCK_END in existing:
         new_text = _block_pattern().sub(lambda _m: block, existing, count=1)

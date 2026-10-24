@@ -118,8 +118,9 @@ auto_update:
 headscale users list                                   # جدول: ID | Name | Username | Email | Created
 headscale users create <NAME>
 headscale users destroy --identifier <ID>   # یا --name <NAME>
-headscale users rename --identifier <ID> --new-name <NAME>   # (یا از سوییچ‌های مشابه؛ با --help بررسی شود)
+headscale users rename --identifier <ID> --new-name <NAME>   # یا --name <OLD> --new-name <NEW>
 ```
+⚠️ در ۰.۲۹.۵ برای `users list` فلگ‌های فیلتر `-n/--name`، `-e/--email` و `-i/--identifier` هم موجود است (خروجی `--help` واقعی).
 
 ### گره‌ها (دستگاه‌ها)
 ```bash
@@ -144,22 +145,33 @@ headscale auth reject  --auth-id <AUTH_ID>
 
 ### کلیدهای از پیش تأییدشده (Preauth)
 ```bash
+# ساخت: -u شناسهٔ عددی (ID) کاربر است؛ انقضای پیش‌فرض «1h»
 headscale preauthkeys create --user <USER_ID> [--reusable] [--ephemeral] [--expiration 30m] [--tags tag:x]
-headscale preauthkeys list --user <USER_ID>
-headscale preauthkeys expire --id <ID>
-headscale preauthkeys delete --id <ID>
+# فهرست: در 0.29.5 فلگ --user «وجود ندارد»؛ همهٔ کلیدها فهرست می‌شوند و کلیدها ماسک‌شده‌اند
+headscale preauthkeys list
+# انقضا/حذف: شناسهٔ عددی خودِ کلید با -i/--id
+headscale preauthkeys expire --id <KEY_ID>
+headscale preauthkeys delete --id <KEY_ID>
 ```
-⚠️ `--user` در preauthkeys **شناسه عددی (ID)** است نه نام کاربر؛ ابتدا با `headscale users list` شناسه را بگیرید. انقضای پیش‌فرض: `1h`.
+⚠️ نکته‌های راستی‌آزمایی‌شده با باینری واقعی 0.29.5:
+- `preauthkeys list` هیچ فلگی جز `-h` ندارد (لیست همهٔ کلیدها؛ کلیدها همیشه ماسک‌شده برمی‌گردند).
+- `--user` فقط در `create` معتبر است و **شناسهٔ عددی (ID)** است نه نام کاربر؛ ابتدا با `headscale users list` شناسه را بگیرید.
+- `expire`/`delete` کلید را با `-i, --id uint` (شناسهٔ عددی کلید از ستون ID خروجی list) انتخاب می‌کنند.
+- نام‌های جایگزین: `list` = `ls`/`show`؛ `expire` = `revoke`/`exp`/`e`؛ `delete` = `del`/`rm`/`d`.
 
 ### سیاست، سلامت، پیکربندی
 ```bash
 headscale policy get|set|check
+# set واقعی (0.29.5): فقط با policy_mode=db کار می‌کند و فایل HuJSON می‌گیرد
+headscale policy set --file <PATH.hujson>
+# (فلگ --bypass-grpc-and-access-database-directly برای اجرا بدون سرویس در حال اجرا)
 headscale health
 headscale configtest          # اعتبارسنجی فایل پیکربندی
 headscale dump_config         # چاپ پیکربندی مؤثر
 headscale version
 headscale serve               # اجرای سرویس (استفاده در systemd)
 ```
+⚠️ `policy get` فقط وقتی `acl.policy_mode` روی `db` باشد سیاست را از پایگاه‌داده نشان می‌دهد؛ در حالت `file` مسیر فایل HuJSON از پیکربندی خوانده می‌شود.
 
 ## ۵. جریان‌های سمت کلاینت Tailscale (رسمی)
 
@@ -212,19 +224,19 @@ sudo apt update && sudo apt install caddy
 Caddyfile رسمی (با تشخیص captive portal اندروید):
 ```caddyfile
 http://headscale.example.com {
-	handle /generate_204 {
-		respond 204
-	}
-	handle * {
-		redir https://{host}{uri}
-	}
+        handle /generate_204 {
+                respond 204
+        }
+        handle * {
+                redir https://{host}{uri}
+        }
 }
 
 headscale.example.com {
-	reverse_proxy 127.0.0.1:8080 {
-		header_up True-Client-IP {remote_host}
-		header_up X-Real-IP {remote_host}
-	}
+        reverse_proxy 127.0.0.1:8080 {
+                header_up True-Client-IP {remote_host}
+                header_up X-Real-IP {remote_host}
+        }
 }
 ```
 - اعتبارسنجی قبل از reload: `caddy validate --config /etc/caddy/Caddyfile`
