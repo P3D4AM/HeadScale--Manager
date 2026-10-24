@@ -27,7 +27,9 @@ def test_help():
 def test_version():
     result = run_cli("--version")
     assert result.returncode == 0
-    assert "0.1.0" in result.stdout
+    # نسخه از خود بسته خوانده می‌شود تا با هر ارتقا به‌روز بماند (v0.3.0)
+    from hem import __version__
+    assert __version__ in result.stdout
 
 
 def test_learn_list():

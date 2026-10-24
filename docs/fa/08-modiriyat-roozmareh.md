@@ -303,6 +303,32 @@ hsctl config show         # نمایش پیکربندی نهایی مؤثر
 
 **قاعده طلایی ویرایش:** هر بار که فایل را دستی ویرایش کردید: ۱) ویرایش، ۲) `hsctl config validate` (اگر خطا گفت، اصلاح و دوباره)، ۳) `sudo systemctl restart headscale`، ۴) `hsctl status`. هرگز بدون `validate` ری‌استارت نکنید — همین یک عادت، جلوی بیشترِ قطعی‌ها را می‌گیرد.
 
+## مدیریت از رابط گرافیکی (برنامهٔ ویندوزی)
+
+برنامهٔ ویندوزی همین کارها را با کلیک انجام می‌دهد — اما هیچ جادویی در کار نیست: پشت هر دکمه، **دستور واقعی همین مخزن** روی سرور اجرا می‌شود. جدول زیر نگاشت هر بخش رابط به همان دستورهاست (جزییات فلگ‌ها در FACTS §۴ مخزن):
+
+| بخش رابط | دستور واقعی که اجرا می‌شود |
+|---|---|
+| داشبورد (آمار) | `headscale users list -o json` + `nodes list -o json` + `preauthkeys list -o json` + `version` |
+| کاربران (`#/users`) | `users list -o json` / `users create <NAME>` / `users rename --identifier <ID> --new-name <NAME>` / `users destroy --identifier <ID> --force` (حذف با تأیید تایپی) |
+| دستگاه‌ها (`#/nodes`) | `nodes list -o json` / `nodes expire --identifier <ID> [--disable]` / `nodes rename` / `nodes tag` / `nodes delete --identifier <ID> --force` |
+| کلیدها (`#/keys`) | PreAuth: `preauthkeys create -u <USER_ID> [--reusable] [--ephemeral] [-e] [--tags]` (کلید کامل فقط یک‌بار) + `list` ماسک‌شده + `expire --id` / `delete --id` · API: `apikeys create` / `list` / `expire --prefix` |
+| مسیرها (`#/routes`) | `nodes list-routes -o json` + `nodes approve-routes --identifier <ID> --routes <CIDR,...>` (رشتهٔ خالی = لغو همه؛ جفت Exit Node خودکار) |
+| سیاست (`#/policy`) | `policy get -o json` (ناموجود → «بدون سیاست») / `policy check` (اعتبارسنجی) / `policy set -f <فایل>` فقط در `policy.mode=database` |
+| پیکربندی (`#/config`) | خواندن `config.yaml` + `configtest` (اعتبارسنجی) + اعمال = پشتیبان، نوشتن، `configtest`، ری‌استارت و سلامت مجدد؛ در شکست، بازگردانی خودکار |
+| سرور و لاگ (`#/server`) | `systemctl is-active/is-enabled/status` + `journalctl -u` + `ss -tulpn` + `df -h` + `curl` محلیِ `/health` + `headscale health` (سه‌لایه) |
+| پشتیبان و ارتقا (`#/backup`) | `hsctl backup create/list/verify` + `hsctl restore <FILE>` (با پشتیبان پیش از بازیابی) + `hsctl update --check` / `hsctl update --yes` |
+| نصب سرور (`#/install`) | آپلود مخزن به سرور + `bash install.sh --dry-run --config answers.conf --non-interactive` و سپس اجرای واقعی با sudo/رضایت صریح |
+| کنسول (`#/console`) | فقط دستورهای مجاز فهرست‌شده (پیش‌نمایش = عین فرمان اجرا) — بدون شل آزاد |
+
+سه قاعدهٔ صادقانه که در رابط هم دقیقاً رعایت می‌شود:
+
+- عملیات مخرب (حذف کاربر/دستگاه، بازیابی، توقف سرویس، اعمال سیاست/پیکربندی) **قبل از اجرا تأیید صریح** با نام واقعی همان شیء می‌گیرد؛
+- مقدار کامل کلید PreAuth/API فقط **یک‌بار** نمایش داده می‌شود؛ بعدش فقط ماسک؛
+- اگر `hsctl` روی سرور نصب نباشد (سروری که با این ابزار نصب نشده)، بخش پشتیبان/ارتقا به‌جای دادهٔ ساختگی، کارت صادقانهٔ «پس از نصب در دسترس» نشان می‌دهد.
+
+راهنمای کامل برنامهٔ ویندوزی (اجرای آن، اتصال، اثر انگشت، ذخیرهٔ امن، عیب‌یابی): [فصل پانزدهم](15-barnameh-windows.md).
+
 ## دوربین‌های مداربسته در یک نگاه
 
 ابزار یک بخش اختصاصی برای ثبت و بررسی دستگاه ضبط دوربین (NVR) دارد — آموزش کامل در **فصل سیزدهم**:
@@ -443,6 +469,7 @@ hsctl doctor
 - پشتیبان (`backup create` + `backup verify`) و بازیابی (`restore`) بعد از هر تغییر مهم.
 - به‌روزرسانی در پنج مرحله امن و **نسخه‌به‌نسخه**؛ اول همیشه `update --check`.
 - بعد از هر ویرایش پیکربندی، قبل از ری‌استارت: `hsctl config validate`.
+- از برنامهٔ ویندوزی هم همهٔ همین کارها قابل انجام است؛ هر دکمه همان دستور واقعی را روی سرور اجرا می‌کند (جدول نگاشت در همین فصل).
 - دستگاه ازدست‌رفته: حذف → رسیدگی به کلیدها → تغییر رمز سرویس‌ها.
 - انتقال به سرور جدید: پشتیبان → scp → نصب تازه → restore → تغییر رکورد A → تست سلامت و کلاینت‌ها.
 

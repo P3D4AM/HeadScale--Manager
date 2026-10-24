@@ -337,6 +337,7 @@ hsctl uninstall [--purge-data] [--yes]
 | `12-poroje-nemooneh.md` | فصل دوازدهم: پروژه نمونه عملی (از صفر تا CRM) |
 | `13-dorbin-madarbaste.md` | فصل سیزدهم: دوربین‌های مداربسته و Dahua |
 | `14-rahnamaye-sari.md` | راهنمای سریع شروع |
+| `15-barnameh-windows.md` | فصل پانزدهم: برنامهٔ ویندوزی (مدیریت با رابط گرافیکی) |
 
 Frontmatter الزامی هر فصل:
 ```yaml
