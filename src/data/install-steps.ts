@@ -208,18 +208,27 @@ export const INSTALL_DIALOG: InstallDialogQA[] = [
   },
 ]
 
-/** فایل نمونه حالت خودکار — از examples/hem-install.conf.example (بدون مقادیر حساس) */
+/** فایل نمونه حالت خودکار — عیناً از examples/hem-install.conf.example (parser واقعی answers.py) */
 export const AUTO_INSTALL_CONF_SAMPLE = `# نمونه فایل پاسخ نصب — cp examples/hem-install.conf.example hem-install.conf
 # پس از ویرایش: chmod 600 hem-install.conf  (این فایل را محافظت کنید!)
 
-domain: headscale.example.com
-dns_status: check            # ok | guide | check
-acme_email: ""
-caddy_mode: install_new      # install_new | use_existing | none
-embedded_derp: true
-magic_dns: true
-ufw_enabled: true
-first_user: admin
+domain: headscale.example.com   # FQDN — رکورد A آن به IP عمومی سرور اشاره می‌کند
+acme_email: ""                  # ایمیل گواهی Let's Encrypt (اختیاری)
+headscale_version: "0.29.5"     # خالی = آخرین نسخهٔ پایدار GitHub
+first_user: admin               # نام اولین کاربر شبکه (بدون فاصله)
+magic_dns_base: ts.example.com  # دامنهٔ MagicDNS — باید با domain متفاوت باشد
+dns_nameservers:                # سرورهای DNS شبکه (IP معتبر)
+  - 1.1.1.1
+  - 8.8.8.8
+caddy_mode: install             # install | reuse | skip (کلید جایگزین قدیمی: caddy)
+embedded_derp: true             # سرور DERP تعبیه‌شده (نیازمند HTTPS)
+firewall: true                  # UFW با قواعد حداقلی (اول SSH)
+ssh_port: ""                    # خالی = تشخیص خودکار از sshd
+install_dir: /opt/headscale-easy-manager
+non_interactive: true
+cameras: []
+# نکته: server_url خودکار از domain و caddy_mode ساخته می‌شود؛
+# کلیدهای magic_dns / caddy_mode: install_new / ip_prefixes وجود ندارند (نامعتبر).
 `
 
 /** چک‌لیست سلامت پس از نصب — سه تست فصل ۴ */

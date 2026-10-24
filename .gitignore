@@ -52,3 +52,11 @@ prompt
 server.log
 # Skills directory
 /skills/
+# HEM dev artifacts (not part of product source)
+agent-ctx/
+tool-results/
+dev.log
+*.pid
+mini-services/hem-agent/agent.log
+mini-services/hem-agent/test-server.log
+mini-services/hem-agent/packaging/dist/

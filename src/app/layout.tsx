@@ -1,12 +1,12 @@
 import type { Metadata, Viewport } from "next";
 import "./globals.css";
-import { Toaster } from "@/components/ui/toaster";
 import { ThemeProvider } from "@/components/theme-provider";
+import { AppProviders } from "@/components/console/providers";
 
 export const metadata: Metadata = {
-  title: "Headscale Easy Manager — خانه محصول و مرکز آموزش فارسی",
+  title: "Headscale Easy Manager — کنسول مدیریت شبکهٔ خصوصی",
   description:
-    "نصب‌کننده هوشمند، مدیر CLI و راهنمای جامع فارسی برای راه‌اندازی شبکه خصوصی مبتنی بر Headscale — ۱۴ فصل آموزش، ۱۷ گام نصب خودکار و مرجع کامل دستورات hsctl.",
+    "کنسول واقعی مدیریت Headscale: اتصال امن SSH به سرور شما، کاوش صادقانهٔ سیستم، مدیریت کاربران/دستگاه‌ها/کلیدها، نصب خودکار و ۱۴ فصل آموزش فارسی.",
   keywords: [
     "Headscale",
     "Tailscale",
@@ -15,6 +15,7 @@ export const metadata: Metadata = {
     "hsctl",
     "شبکه خصوصی",
     "آموزش فارسی",
+    "مدیریت سرور",
   ],
   authors: [{ name: "Headscale Easy Manager" }],
 };
@@ -55,8 +56,7 @@ export default function RootLayout({
           enableSystem
           disableTransitionOnChange
         >
-          {children}
-          <Toaster />
+          <AppProviders>{children}</AppProviders>
         </ThemeProvider>
       </body>
     </html>

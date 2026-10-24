@@ -37,6 +37,16 @@
     ".next/dev/types/**/*.ts"
   ],
   "exclude": [
-    "node_modules"
+    "node_modules",
+    "mini-services",
+    "examples",
+    "skills",
+    "headscale-easy-manager",
+    "db",
+    "download",
+    "agent-ctx",
+    "tool-results",
+    "upload",
+    "tests"
   ]
 }

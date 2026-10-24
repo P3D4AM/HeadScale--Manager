@@ -2,7 +2,6 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
-  AlertCircle,
   BookOpenCheck,
   CheckCircle2,
   ChevronLeft,
@@ -16,12 +15,13 @@ import { cn } from '@/lib/utils'
 import { Card, CardContent } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
 import { Progress } from '@/components/ui/progress'
-import { Separator } from '@/components/ui/separator'
-import { Skeleton } from '@/components/ui/skeleton'
 import { Button } from '@/components/ui/button'
 import { chapterIcon, faNum } from '../chapter-icons'
 import { Markdown } from '../markdown'
 import { useLocalStorageJson } from '@/hooks/use-local-storage'
+// محتوای آموزش در «زمان ساخت» تولید می‌شود (scripts/generate-docs.ts — اصلاح ۴.۹):
+// بدون endpoint زمان-اجرا → سازگار با static export و بستهٔ ویندوز.
+import { DOCS } from '@/generated/docs-content'
 
 export interface DocMeta {
   order: number
@@ -36,30 +36,22 @@ interface DocContent extends DocMeta {
   content: string
 }
 
-function ReadingSkeleton() {
-  return (
-    <div className="space-y-4">
-      <Skeleton className="h-8 w-2/3" />
-      <Skeleton className="h-4 w-1/3" />
-      <Separator />
-      <div className="space-y-3 pt-2">
-        {Array.from({ length: 10 }).map((_, i) => (
-          <Skeleton key={i} className={cn('h-4', i % 3 === 0 ? 'w-full' : 'w-[85%]')} />
-        ))}
-      </div>
-      <Skeleton className="h-40 w-full" />
-    </div>
-  )
+/** فهرست و محتوای فصل‌ها از ماژول تولیدشده (هم‌زمان، بدون شبکه). */
+function useDocs(): { chapters: DocMeta[]; bySlug: Map<string, DocContent> } {
+  return useMemo(() => {
+    const bySlug = new Map<string, DocContent>()
+    for (const d of DOCS) {
+      bySlug.set(d.slug, { ...d, lines: d.content.split('\n').length })
+    }
+    return { chapters: [...bySlug.values()], bySlug }
+  }, [])
 }
 
 export function LearnSection() {
   const route = useRoute()
-  const [chapters, setChapters] = useState<DocMeta[] | null>(null)
-  const [listError, setListError] = useState<string | null>(null)
   const [query, setQuery] = useState('')
-  const [docs, setDocs] = useState<Record<string, DocContent>>({})
-  const [docErrors, setDocErrors] = useState<Record<string, string>>({})
   const contentRef = useRef<HTMLDivElement>(null)
+  const { chapters, bySlug } = useDocs()
 
   // فصل‌های خوانده‌شده — localStorage با useSyncExternalStore
   const [readArr, setReadArr] = useLocalStorageJson<number[]>('hem-read-chapters', [])
@@ -74,30 +66,12 @@ export function LearnSection() {
     [setReadArr]
   )
 
-  // فهرست فصل‌ها
-  useEffect(() => {
-    let alive = true
-    fetch('/api/docs')
-      .then(async (res) => {
-        const data = await res.json()
-        if (!res.ok) throw new Error(data?.error ?? 'خطا')
-        if (alive) setChapters(data.chapters as DocMeta[])
-      })
-      .catch(() => {
-        if (alive) setListError('دریافت فهرست فصل‌ها ناموفق بود — اتصال را بررسی کنید.')
-      })
-    return () => {
-      alive = false
-    }
-  }, [])
-
   const selected = useMemo(
-    () => chapters?.find((c) => c.order === route.chapter) ?? null,
+    () => chapters.find((c) => c.order === route.chapter) ?? null,
     [chapters, route.chapter]
   )
 
   const filtered = useMemo(() => {
-    if (!chapters) return []
     const q = query.trim()
     if (!q) return chapters
     return chapters.filter(
@@ -105,27 +79,8 @@ export function LearnSection() {
     )
   }, [chapters, query])
 
-  const currentDoc = selected ? docs[selected.slug] ?? null : null
-  const currentError = selected ? docErrors[selected.slug] ?? null : null
-  const docLoading = Boolean(selected) && !currentDoc && !currentError
-
-  // محتوای فصل انتخاب‌شده
-  useEffect(() => {
-    if (!selected) return
-    const { slug } = selected
-    fetch(`/api/docs/${encodeURIComponent(slug)}`)
-      .then(async (res) => {
-        const data = await res.json()
-        if (!res.ok) throw new Error(data?.error ?? 'خطا')
-        setDocs((prev) => ({ ...prev, [slug]: data as DocContent }))
-      })
-      .catch(() => {
-        setDocErrors((prev) => ({
-          ...prev,
-          [slug]: 'دریافت محتوای فصل ناموفق بود — دوباره تلاش کنید.',
-        }))
-      })
-  }, [selected])
+  // محتوای فصل انتخاب‌شده — هم‌زمان از ماژول تولیدشده در زمان ساخت
+  const currentDoc = selected ? bySlug.get(selected.slug) ?? null : null
 
   // اسکرول به ابتدای صفحه هنگام تعویض فصل
   useEffect(() => {
@@ -147,24 +102,10 @@ export function LearnSection() {
   }, [selected, read, toggleRead])
 
   const readCount = read.size
-  const total = chapters?.length ?? 14
-  const idx = selected ? chapters?.findIndex((c) => c.order === selected.order) ?? -1 : -1
-  const prev = idx > 0 && chapters ? chapters[idx - 1] : null
-  const next =
-    idx >= 0 && chapters && idx < chapters.length - 1 ? chapters[idx + 1] : null
-
-  if (listError) {
-    return (
-      <div className="mx-auto max-w-7xl px-4 py-16 sm:px-6">
-        <Card className="border-destructive/40">
-          <CardContent className="flex items-center gap-3 p-6 text-sm text-destructive">
-            <AlertCircle className="size-5 shrink-0" />
-            {listError}
-          </CardContent>
-        </Card>
-      </div>
-    )
-  }
+  const total = chapters.length
+  const idx = selected ? chapters.findIndex((c) => c.order === selected.order) : -1
+  const prev = idx > 0 ? chapters[idx - 1] : null
+  const next = idx >= 0 && idx < chapters.length - 1 ? chapters[idx + 1] : null
 
   return (
     <div className="mx-auto max-w-7xl gap-6 px-4 py-8 sm:px-6 lg:grid lg:grid-cols-[300px_1fr]">
@@ -196,59 +137,54 @@ export function LearnSection() {
           </div>
 
           <div className="custom-scrollbar mt-4 max-h-[55vh] space-y-1 overflow-y-auto pe-1 lg:max-h-[calc(100vh-340px)]">
-            {!chapters &&
-              Array.from({ length: 8 }).map((_, i) => (
-                <Skeleton key={i} className="h-12 w-full rounded-lg" />
-              ))}
-            {chapters &&
-              filtered.map((c) => {
-                const Icon = chapterIcon(c.icon)
-                const active = selected?.order === c.order
-                const isRead = read.has(c.order)
-                return (
-                  <button
-                    key={c.slug}
-                    type="button"
-                    onClick={() => navigate(`#/learn/${c.order}`)}
+            {filtered.map((c) => {
+              const Icon = chapterIcon(c.icon)
+              const active = selected?.order === c.order
+              const isRead = read.has(c.order)
+              return (
+                <button
+                  key={c.slug}
+                  type="button"
+                  onClick={() => navigate(`#/learn/${c.order}`)}
+                  className={cn(
+                    'flex min-h-11 w-full items-center gap-2.5 rounded-lg border px-2.5 py-2 text-start transition-colors',
+                    active
+                      ? 'border-emerald-500/40 bg-emerald-500/10'
+                      : 'border-transparent hover:bg-muted'
+                  )}
+                >
+                  <span
                     className={cn(
-                      'flex min-h-11 w-full items-center gap-2.5 rounded-lg border px-2.5 py-2 text-start transition-colors',
+                      'inline-flex size-6 shrink-0 items-center justify-center rounded-md text-[11px] font-black',
                       active
-                        ? 'border-emerald-500/40 bg-emerald-500/10'
-                        : 'border-transparent hover:bg-muted'
+                        ? 'bg-emerald-600 text-white dark:bg-emerald-500 dark:text-slate-950'
+                        : 'bg-muted text-muted-foreground'
                     )}
                   >
-                    <span
-                      className={cn(
-                        'inline-flex size-6 shrink-0 items-center justify-center rounded-md text-[11px] font-black',
-                        active
-                          ? 'bg-emerald-600 text-white dark:bg-emerald-500 dark:text-slate-950'
-                          : 'bg-muted text-muted-foreground'
-                      )}
-                    >
-                      {faNum(c.order)}
-                    </span>
-                    <Icon
-                      className={cn(
-                        'size-4 shrink-0',
-                        active ? 'text-emerald-600 dark:text-emerald-400' : 'text-muted-foreground'
-                      )}
-                    />
-                    <span
-                      className={cn(
-                        'flex-1 truncate text-[13px]',
-                        active ? 'font-bold text-foreground' : 'text-foreground/80'
-                      )}
-                      title={c.title}
-                    >
-                      {c.title.replace(/^فصل [^:]*:\s*/, '')}
-                    </span>
-                    {isRead && (
-                      <CheckCircle2 className="size-4 shrink-0 text-emerald-600 dark:text-emerald-400" />
+                    {faNum(c.order)}
+                  </span>
+                  <Icon
+                    className={cn(
+                      'size-4 shrink-0',
+                      active ? 'text-emerald-600 dark:text-emerald-400' : 'text-muted-foreground'
                     )}
-                  </button>
-                )
-              })}
-            {chapters && filtered.length === 0 && (
+                  />
+                  <span
+                    className={cn(
+                      'flex-1 truncate text-[13px]',
+                      active ? 'font-bold text-foreground' : 'text-foreground/80'
+                    )}
+                    title={c.title}
+                  >
+                    {c.title.replace(/^فصل [^:]*:\s*/, '')}
+                  </span>
+                  {isRead && (
+                    <CheckCircle2 className="size-4 shrink-0 text-emerald-600 dark:text-emerald-400" />
+                  )}
+                </button>
+              )
+            })}
+            {filtered.length === 0 && (
               <p className="px-2 py-6 text-center text-xs text-muted-foreground">
                 فصلی با این عبارت پیدا نشد.
               </p>
@@ -268,70 +204,62 @@ export function LearnSection() {
                 مرکز آموزش فارسی
               </h1>
               <p className="mt-2 text-sm leading-7 text-muted-foreground">
-                ۱۴ فصل — از «VPN چیست؟» تا پروژهٔ عملی و دوربین‌های مداربسته. همهٔ
+                {faNum(total)} فصل — از «VPN چیست؟» تا پروژهٔ عملی و دوربین‌های مداربسته. همهٔ
                 فصل‌ها داخل خود ابزار هم در دسترس‌اند:{' '}
                 <code dir="ltr" className="rounded bg-muted px-1.5 py-0.5 font-mono text-xs">
                   hsctl learn list
                 </code>
               </p>
             </div>
-            {!chapters ? (
-              <div className="grid gap-4 sm:grid-cols-2">
-                {Array.from({ length: 6 }).map((_, i) => (
-                  <Skeleton key={i} className="h-36 rounded-2xl" />
-                ))}
-              </div>
-            ) : (
-              <div className="grid gap-4 sm:grid-cols-2">
-                {chapters.map((c, i) => {
-                  const Icon = chapterIcon(c.icon)
-                  const isRead = read.has(c.order)
-                  return (
-                    <motion.button
-                      key={c.slug}
-                      type="button"
-                      initial={{ opacity: 0, y: 12 }}
-                      animate={{ opacity: 1, y: 0 }}
-                      transition={{ duration: 0.3, delay: Math.min(i * 0.04, 0.4) }}
-                      onClick={() => navigate(`#/learn/${c.order}`)}
-                      className="group h-full"
-                    >
-                      <Card className="h-full border-border/80 bg-card/70 text-start transition-all hover:-translate-y-0.5 hover:border-emerald-500/40 hover:shadow-lg hover:shadow-emerald-500/5">
-                        <CardContent className="flex h-full flex-col gap-2.5 p-5">
-                          <div className="flex items-center justify-between gap-2">
-                            <div className="flex items-center gap-2.5">
-                              <span className="inline-flex size-8 items-center justify-center rounded-lg bg-emerald-500/10 text-emerald-600 dark:text-emerald-400">
-                                <Icon className="size-4" />
-                              </span>
-                              <span className="text-xs font-black text-muted-foreground">
-                                فصل {faNum(c.order)}
-                              </span>
-                            </div>
-                            {isRead && (
-                              <span className="inline-flex items-center gap-1 rounded-full bg-emerald-500/10 px-2 py-0.5 text-[10px] font-bold text-emerald-700 dark:text-emerald-300">
-                                <CheckCircle2 className="size-3" />
-                                خوانده‌شده
-                              </span>
-                            )}
+            <div className="grid gap-4 sm:grid-cols-2">
+              {chapters.map((c, i) => {
+                const Icon = chapterIcon(c.icon)
+                const isRead = read.has(c.order)
+                return (
+                  <motion.button
+                    key={c.slug}
+                    type="button"
+                    initial={{ opacity: 0, y: 12 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    transition={{ duration: 0.3, delay: Math.min(i * 0.04, 0.4) }}
+                    onClick={() => navigate(`#/learn/${c.order}`)}
+                    className="group h-full"
+                  >
+                    <Card className="h-full border-border/80 bg-card/70 text-start transition-all hover:-translate-y-0.5 hover:border-emerald-500/40 hover:shadow-lg hover:shadow-emerald-500/5">
+                      <CardContent className="flex h-full flex-col gap-2.5 p-5">
+                        <div className="flex items-center justify-between gap-2">
+                          <div className="flex items-center gap-2.5">
+                            <span className="inline-flex size-8 items-center justify-center rounded-lg bg-emerald-500/10 text-emerald-600 dark:text-emerald-400">
+                              <Icon className="size-4" />
+                            </span>
+                            <span className="text-xs font-black text-muted-foreground">
+                              فصل {faNum(c.order)}
+                            </span>
                           </div>
-                          <h3 className="text-sm font-bold leading-6 text-foreground">
-                            {c.title}
-                          </h3>
-                          <p className="line-clamp-2 text-xs leading-5 text-muted-foreground">
-                            {c.description}
-                          </p>
-                          <span className="mt-auto inline-flex items-center gap-1 pt-1 text-[11px] text-muted-foreground">
-                            <Clock className="size-3" />
-                            حدود {faNum(Math.max(1, Math.round(c.lines / 15)))} دقیقه مطالعه ·{' '}
-                            {faNum(c.lines)} خط
-                          </span>
-                        </CardContent>
-                      </Card>
-                    </motion.button>
-                  )
-                })}
-              </div>
-            )}
+                          {isRead && (
+                            <span className="inline-flex items-center gap-1 rounded-full bg-emerald-500/10 px-2 py-0.5 text-[10px] font-bold text-emerald-700 dark:text-emerald-300">
+                              <CheckCircle2 className="size-3" />
+                              خوانده‌شده
+                            </span>
+                          )}
+                        </div>
+                        <h3 className="text-sm font-bold leading-6 text-foreground">
+                          {c.title}
+                        </h3>
+                        <p className="line-clamp-2 text-xs leading-5 text-muted-foreground">
+                          {c.description}
+                        </p>
+                        <span className="mt-auto inline-flex items-center gap-1 pt-1 text-[11px] text-muted-foreground">
+                          <Clock className="size-3" />
+                          حدود {faNum(Math.max(1, Math.round(c.lines / 15)))} دقیقه مطالعه ·{' '}
+                          {faNum(c.lines)} خط
+                        </span>
+                      </CardContent>
+                    </Card>
+                  </motion.button>
+                )
+              })}
+            </div>
           </div>
         )}
 
@@ -392,20 +320,18 @@ export function LearnSection() {
               </div>
             </div>
 
-            {/* بدنهٔ فصل */}
+            {/* بدنهٔ فصل — محتوای build-time، بدون حالت بارگیری/خطای شبکه */}
             <Card className="bg-card/70">
               <CardContent className="p-4 sm:p-7">
-                {docLoading && <ReadingSkeleton />}
-                {currentError && (
-                  <p className="flex items-center gap-2 py-8 text-sm text-destructive">
-                    <AlertCircle className="size-5" />
-                    {currentError}
-                  </p>
-                )}
                 {currentDoc && (
                   <div ref={contentRef}>
                     <Markdown content={currentDoc.content} />
                   </div>
+                )}
+                {!currentDoc && (
+                  <p className="py-8 text-sm text-muted-foreground">
+                    محتوای این فصل در بستهٔ تولیدشده موجود نیست.
+                  </p>
                 )}
               </CardContent>
             </Card>

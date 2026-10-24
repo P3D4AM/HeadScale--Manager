@@ -44,7 +44,9 @@ const eslintConfig = [...nextCoreWebVitals, ...nextTypescript, {
     "no-useless-escape": "off",
   },
 }, {
-  ignores: ["node_modules/**", ".next/**", "out/**", "build/**", "next-env.d.ts", "examples/**", "skills"]
+  // خروجی‌های build (کد مینیفای‌شده/نقشه‌ها) هرگز lint نمی‌شوند — سورس همهٔ زیرپروژه‌ها (از جمله mini-services/hem-agent) همچنان lint می‌شود.
+  // ui-out و packaging/dist محصولات build پکیج ویندوزی (7-b) هستند؛ .cache و dist الگوی عمومی خروجی‌اند.
+  ignores: ["node_modules/**", ".next/**", "out/**", "build/**", "next-env.d.ts", "examples/**", "skills", "**/ui-out/**", "**/packaging/dist/**", "**/dist/**", "**/.cache/**"]
 }];
 
 export default eslintConfig;
