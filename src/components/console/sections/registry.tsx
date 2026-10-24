@@ -111,7 +111,7 @@ export const SECTIONS: SectionMeta[] = [
   },
   {
     id: 'learn',
-    title: 'مرکز آموزش — ۱۴ فصل فارسی',
+    title: 'مرکز آموزش — ۱۵ فصل فارسی',
     navLabel: 'آموزش',
     group: 'learn',
     icon: BookOpenCheck,

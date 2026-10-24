@@ -12,7 +12,7 @@ const FOOTER_LINKS: { id: SectionId; label: string; icon: React.ElementType }[] 
   { id: 'keys', label: 'کلیدها', icon: KeyRound },
   { id: 'server', label: 'سرور و لاگ', icon: ServerCog },
   { id: 'backup', label: 'پشتیبان و ارتقا', icon: CloudUpload },
-  { id: 'learn', label: 'مرکز آموزش (۱۴ فصل)', icon: BookOpenCheck },
+  { id: 'learn', label: 'مرکز آموزش (۱۵ فصل)', icon: BookOpenCheck },
   { id: 'help', label: 'راهنما و عیب‌یابی', icon: CircleHelp },
 ]
 
