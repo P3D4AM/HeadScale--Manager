@@ -448,3 +448,22 @@ Work Log:
 Stage Summary:
 - محصول v0.3.0 کامل و راستی‌آزمایی‌شده: کنسول فارسی واقعی (اتصال SSH با TOFU، داشبورد، ویزارد نصب ۵ مرحله‌ای، کاربران/دستگاه‌ها/کلیدها/مسیرها/سیاست/پیکربندی/سرور/پشتیبان/کنسول مجاز، ۱۵ فصل آموزش) + hem-agent (83 تست) + نصب‌کنندهٔ اصلاح‌شده (103 تست، ایرادهای 4.1-4.11 رفع) + بستهٔ ویندوزی exe + zip + پشتیبان ابری.
 - محدودیت‌های صادقانهٔ باقی‌مانده: اجرای واقعی exe ویندوزی و نصب واقعی روی VPS اوبونتوی تمیز نیازمند محیط واقعی است (در سندباکس: cross-compile + باینری لینوکسی هم‌سورس اجرا و تأیید شد؛ نصب فقط تا SUDO_REQUIRED صادقانه پیش رفت).
+
+---
+Task ID: 10 (فاز v0.3.1 — گیت/انتشار)
+Agent: Z.ai Code (Main Orchestrator)
+Task: §۲ فاز اصلاح پیش از انتشار v0.3.1 — تصمیم gitlink، پاک‌سازی گیت، release.sh مقاوم به clone تمیز
+
+Work Log:
+- تحویل ریپوی گیتهاب از کاربر (https://github.com/P3D4AM/HeadScale--Manager): کاربر push کرده بود (کامیت 31c5d50 «HereWeGo» فقط تغییر mode فایل‌ها). کلون بررسی شد: پوشهٔ headscale-easy-manager در کلون «خالی» بود — اثبات مشکل §۲: gitlink بدون .gitmodules = مخزن بی‌استفاده برای clone تمیز.
+- تصمیم روشن (طبق §۲ «یا .gitmodules یا انتقال به ساختار اصلی»): انتقال به ساختار اصلی (fold). تاریخچهٔ ۷ کامیت مخزن داخلی از دست نرفت: push به شاخهٔ archive/hem-python در همان ریپو (885f1d6 سرِ شاخه).
+- fold اجرا شد: حذف gitlink از index، حذف headscale-easy-manager/.git، افزودن ۹۰ فایل مخزن پایتون به گیت اصلی (inner .gitignore خودش: __pycache__/log/sqlite/tar.gz/env را می‌پوشاند).
+- کشف بحرانی: سطر «test» در .gitignore باعث شده بود کل مجموعهٔ تست‌های agent (۱۰ فایل + server.ts + fixtures — ۸۳ تست) هرگز وارد گیت نشود → clone تمیز اصلاً تست agent ندارد و build-windows.sh هم می‌شکند (به test/server.ts وابسته است). سطر حذف شد؛ ۲۰ فایل test/ اضافه شدند.
+- حذف از tracking + gitignore: .env (فقط DATABASE_URL مرده بود)، db/ (پایگاه‌دادهٔ توسعه — محصول DB ندارد: UI استاتیک + agent فایل‌محور)، download/ (خروجی‌های قدیمی انتشار)، mini-services/hem-agent/ui-out/ (خروجی بیلد قدیمی)، prisma/ + src/lib/db.ts (اسکلت مردهٔ قالب — هیچ ارجاعی نداشت) + حذف اسکریپت‌های db:* از package.json.
+- tests/database-runtime-build.sh و .zscripts/database-runtime-build.sh → no-op صادقانه (محصول DB ندارد) تا ابزار build سندباکس نشکند.
+- release.sh: ۴-۴ از «git -C مخزن‌داخلی archive» به «git archive HEAD:headscale-easy-manager» (پس از fold)؛ گارد جدید: repo بودن، نبودن مخزن تو در تو؛ ۴-۳ exclude=ui-out؛ FORBIDDEN += ui-out، prisma، src/lib/db.ts.
+- گیت‌ها: lint PASS، tsc PASS. اجرای آزمایشی release.sh قبل از کامیت fold به‌درستی مردود شد (fatal: not a tree object 885f1d6 — همان gitlink) — رفتار شکست صادقانه.
+
+Stage Summary:
+- ساختار گیت حالا خودکفاست: clone تمیز = کل محصول (وب + agent + مخزن پایتون + تست‌ها)؛ تاریخچهٔ پایتون در archive/hem-python؛ خروجی‌ها/داده‌های توسعه هرگز وارد گیت نمی‌شوند.
+- لازم است پس از این کامیت، release.sh دوباره اجرا و تأیید شود (HEAD باید فایل‌های fold را داشته باشد).

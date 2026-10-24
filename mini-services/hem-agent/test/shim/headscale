@@ -1,0 +1,2 @@
+#!/bin/bash
+exec /tmp/hs-bin/headscale --config /home/z/hs-test/config.yaml "$@"

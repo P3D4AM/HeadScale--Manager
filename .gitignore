@@ -44,19 +44,22 @@ local-*
 .claude
 .z-ai-config
 *.log
-dev.log
 dev.out.log
-test
-prompt
 
 server.log
 # Skills directory
 /skills/
-# HEM dev artifacts (not part of product source)
+# HEM dev artifacts (not part of product source) — v0.3.1 §2:
+# هرگز چیز ساخته‌شده/محیط توسعه وارد گیت نمی‌شود (تست‌های agent «منبع» هستند و
+# باید track شوند؛ به‌همین‌دلیل الگوی عمومی «test» حذف شد — تست‌ها در گیت نیستند
+# یعنی clone تمیز نمی‌تواند آن‌ها را اجرا کند).
 agent-ctx/
 tool-results/
-dev.log
 *.pid
-mini-services/hem-agent/agent.log
-mini-services/hem-agent/test-server.log
+# پایگاه‌دادهٔ توسعه و خروجی‌های انتشار فقط محلی‌اند (محصول DB ندارد — v0.3.1)
+/db/
+/download/
+# خروجی‌های build (همیشه از ابتدا ساخته می‌شوند)
+mini-services/hem-agent/ui-out/
+mini-services/hem-agent/.cache/
 mini-services/hem-agent/packaging/dist/

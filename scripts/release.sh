@@ -6,7 +6,8 @@
 #   ۱) هیچ بسته‌ای بدون گذر از گیت‌های واقعی ساخته نمی‌شود:
 #      docs:generate → tsc --noEmit → lint (هر سه الزامی، بدون تابعیت به ignore فلگ‌ها)
 #   ۲) گردآوری فقط با allowlist — هر چیزی خارج از فهرست، هرگز وارد بسته نمی‌شود
-#      (مخزن پایتون از «git archive HEAD» — بدون .git، کش‌ها و فایل‌های ردیابی‌نشده)
+#      (مخزن پایتون از «git archive HEAD:headscale-easy-manager» — بدون کش و فایل‌های
+#      ردیابی‌نشده؛ پس از fold v0.3.1 مخزن پایتون در همین گیت ریشه است)
 #   ۳) خودآزمایی داخل خود اسکریپت: محتوای تاربال بازرسی می‌شود؛ فایل ممنوعه = شکست
 #
 # خروجی: download/headscale-easy-manager-v<VERSION>.tar.gz + .sha256
@@ -45,6 +46,8 @@ log "▸ [3/5] lint (eslint .)…"
 bun run lint
 
 # ─── پیش‌شرط‌های ساختاری ───
+[ -d .git ] || die "release.sh باید از داخل clone گیت اجرا شود (git archive لازم است)"
+[ ! -e headscale-easy-manager/.git ] || die "headscale-easy-manager نباید مخزن تو در تو باشد (fold v0.3.1 — .git داخلی حذف شده است)"
 [ ! -e src/app/api/docs ] || die "src/app/api/docs باید حذف شده باشد (اصلاح ۴.۹ — مستندات build-time)"
 [ -f src/generated/docs-content.ts ] || die "src/generated/docs-content.ts تولید نشد"
 [ -f mini-services/hem-agent/index.ts ] || die "mini-services/hem-agent/index.ts پیدا نشد"
@@ -65,7 +68,7 @@ cp -a src "$PKG_ROOT/src"
 mkdir -p "$PKG_ROOT/scripts"
 cp scripts/generate-docs.ts "$PKG_ROOT/scripts/generate-docs.ts"
 
-# ۴-۳) سرویس agent — بدون node_modules/لاگ/کش/خروجی بیلد
+# ۴-۳) سرویس agent — بدون node_modules/لاگ/کش/خروجی بیلد (ui-out همیشه از ابتدا ساخته می‌شود)
 mkdir -p "$PKG_ROOT/mini-services/hem-agent"
 (
   cd mini-services/hem-agent
@@ -74,13 +77,15 @@ mkdir -p "$PKG_ROOT/mini-services/hem-agent"
     --exclude='*.log' \
     --exclude=.cache \
     --exclude=dist \
+    --exclude=ui-out \
     --exclude=__pycache__ \
     .
 ) | tar -xf - -C "$PKG_ROOT/mini-services/hem-agent"
 
-# ۴-۴) مخزن پایتون — فقط درخت کامیت‌شده (بدون .git/کش/فایل‌های ردیابی‌نشده)
+# ۴-۴) مخزن پایتون — فقط درخت کامیت‌شدهٔ «همین گیت» (پس از fold v0.3.1؛
+#      بدون .git/کش/فایل‌های ردیابی‌نشده)
 mkdir -p "$PKG_ROOT/headscale-easy-manager"
-git -C headscale-easy-manager archive HEAD | tar -xf - -C "$PKG_ROOT/headscale-easy-manager"
+git archive HEAD:headscale-easy-manager | tar -xf - -C "$PKG_ROOT/headscale-easy-manager"
 
 # ۴-۵) فایل‌های سطح بالای پروژه
 for f in package.json bun.lock next.config.ts tsconfig.json tailwind.config.ts \
@@ -114,7 +119,7 @@ tarball_has() { # $1 = مدخل دقیق (خط کامل) — خروجی ۰ یع�
 }
 
 # ۵-۱) هیچ فایل ممنوعه‌ای نباید در بسته باشد
-FORBIDDEN='(^|/)\.git(/|$)|(^|/)\.env($|\.)|(^|/)node_modules(/|$)|__pycache__|\.pytest_cache|\.ruff_cache|\.sqlite|\.log$|(^|/)agent-ctx(/|$)|(^|/)download(/|$)|(^|/)\.next(/|$)'
+FORBIDDEN='(^|/)\.git(/|$)|(^|/)\.env($|\.)|(^|/)node_modules(/|$)|__pycache__|\.pytest_cache|\.ruff_cache|\.sqlite|\.log$|(^|/)agent-ctx(/|$)|(^|/)download(/|$)|(^|/)\.next(/|$)|(^|/)ui-out(/|$)|(^|/)prisma(/|$)|(^|/)src/lib/db\.ts$'
 if printf '%s\n' "$LISTING" | grep -Eq "$FORBIDDEN"; then
   printf '%s\n' "$LISTING" | grep -E "$FORBIDDEN" | head -n 20 >&2
   die "بسته شامل فایل(های) ممنوع است — فهرست بالا؛ بسته ساخته نشد."
@@ -140,8 +145,8 @@ case "$GENERATED_CHAPTERS" in ''|*[!0-9]*) die "شمارش فصل‌های ما�
 if [ "$GENERATED_CHAPTERS" -lt "$ARCHIVE_CHAPTERS" ]; then
   die "ماژول تولیدی ($GENERATED_CHAPTERS فصل) از docs/fa داخل بسته ($ARCHIVE_CHAPTERS فصل) عقب است — bun run docs:generate اجرا نشد یا کهنه است"
 elif [ "$GENERATED_CHAPTERS" -gt "$ARCHIVE_CHAPTERS" ]; then
-  log "⚠ هشدار: محتوای تولیدی ($GENERATED_CHAPTERS فصل) جلوتر از HEAD مخزن داخلی ($ARCHIVE_CHAPTERS فصل) است —"
-  log "⚠ یعنی docs/fa کاری (کامیت‌نشده) در بسته نیست؛ پس از کامیت مخزن داخلی، release.sh را دوباره اجرا کنید."
+  log "⚠ هشدار: محتوای تولیدی ($GENERATED_CHAPTERS فصل) جلوتر از HEAD گیت اصلی ($ARCHIVE_CHAPTERS فصل) است —"
+  log "⚠ یعنی docs/fa کاری (کامیت‌نشده) در بسته نیست؛ پس از کامیت، release.sh را دوباره اجرا کنید."
 fi
 
 # ─── جمع‌بندی ───
