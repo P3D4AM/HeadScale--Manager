@@ -82,7 +82,12 @@ def fetch_checksums(version: str) -> dict:
 
 
 def checksum_for(version: str, arch: str, filename: str | None = None) -> str | None:
-    """SHA-256 بسته — اول از checksums رسمی؛ در نبود آن، مقدار پین‌شده 0.29.5/amd64."""
+    """SHA-256 بسته — اول از checksums رسمی؛ در نبود آن، مقدار پین‌شده 0.29.5/amd64.
+
+    None یعنی checksum رسمی در دسترس نیست؛ فراخوانندهٔ نصب/ارتقا موظف است در
+    این حالت متوقف شود (installer.mandatory_checksum) — ادامه بدون چک‌سام
+    مجاز نیست (اصلاح ۴.۵).
+    """
     version = normalize_version(version)
     fname = filename or deb_filename(version, arch)
     table = fetch_checksums(version)

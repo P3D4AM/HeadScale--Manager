@@ -152,6 +152,10 @@ def create_backup(output=None, dry_run: bool = False, ctx: BackupContext | None 
             if block:
                 (staging / "caddy-block.txt").write_text(block, encoding="utf-8")
                 manifest["caddy_block"] = True
+                # اصلاح ۴.۸: hash «همهٔ» فایل‌های آرشیو باید در manifest باشد
+                manifest["files"]["caddy-block.txt"] = manager.sha256_file(
+                    staging / "caddy-block.txt"
+                )
         # ۵) manifest
         (staging / "manifest.json").write_text(
             json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8"

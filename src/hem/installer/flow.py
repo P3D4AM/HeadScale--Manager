@@ -60,6 +60,15 @@ STEP_TITLES = {
 # و خودِ تأیید برنامه عارضه‌ای ندارند؛ در resume با ثبت ok پرش می‌خورند.
 RESUME_SKIP = {"welcome", "preflight", "prereq", "resources", "gather", "validate", "plan"}
 
+# وضعیت‌های نهایی نصب (اصلاح ۴.۴) — برچسب‌های فارسی قراردادی؛ هم در جمع‌بندی
+# کنسول و هم در گزارش md (گام report) استفاده می‌شوند.
+#   full_success        → نصب کاملاً موفق (سلامت داخلی + بیرونی هر دو تأیید)
+#   verified            → همهٔ چک‌های الزامیِ این پیکربندی پاس شد (بدون HTTPS بیرونی)
+#   pending_verification→ DNS یا گواهی TLS هنوز آماده نیست (بیرونی تأییدنشده)
+#   service_not_ready   → سرویس فعال نیست یا سلامت محلی پاس نشد
+#   partial_failure     → بخشی از گام‌ها شکست خورد
+FINAL_STATES = ("verified", "service_not_ready", "pending_verification", "partial_failure", "full_success")
+
 
 class InstallCancelled(RuntimeError):
     """کاربر نصب را لغو کرد."""
@@ -217,15 +226,48 @@ class InstallFlow:
             return C.EXIT_NO_CONFIRM
 
         complete = runner.summary()
-        if not complete:
+        # ── وضعیت نهایی صادقانه (اصلاح ۴.۴) ────────────────────────────
+        # پیام «نصب کامل شد» فقط وقتی مجاز است که وضعیت واقعاً verified/full_success
+        # باشد؛ در غیر این صورت سرِگروهِ وضعیت مربوط چاپ می‌شود.
+        if self.dry_run:
+            if complete:
+                print(
+                    "✓ [dry-run] شبیه‌سازی کامل نصب تا انتها انجام شد — "
+                    f"{fmt('dry_run_notice')}"
+                )
+                return C.EXIT_OK
+            print("✗ [dry-run] شبیه‌سازی ناتمام ماند — موارد بالا را رفع و دوباره اجرا کنید.")
+            return C.EXIT_ERROR
+
+        final_state = "partial_failure" if not complete else self._final_install_state()
+        self.state.data["final_status"] = final_state
+        self._safe_save_state()
+        print("─" * 60)
+        headline = {
+            "verified": "✅ " + fmt("final_verified"),
+            "service_not_ready": "⚠ " + fmt("final_service_not_ready"),
+            "pending_verification": "⚠ " + fmt("final_pending_verification"),
+            "partial_failure": "✗ " + fmt("final_partial_failure"),
+            "full_success": "✅ " + fmt("final_full_success"),
+        }[final_state]
+        print(headline)
+        if final_state == "pending_verification":
+            # یادداشت صادقانه: تا آماده‌شدن DNS/گواهی، دسترسی بیرونی تأییدنشده است.
+            print(f"  {fmt('final_pending_note')}")
+        if final_state == "service_not_ready":
+            print("  وضعیت سرویس: systemctl status headscale   |   عیب‌یابی: hsctl doctor")
+        print("  وضعیت کامل: hsctl status   |   عیب‌یابی: hsctl doctor")
+        if final_state == "partial_failure":
             print(
                 "برای ادامه بعد از رفع مشکل، همین دستور را دوباره اجرا کنید؛ "
                 "گام‌های انجام‌شده تکرار نمی‌شوند:  sudo hsctl install"
             )
             return C.EXIT_ERROR
-        print("─" * 60)
-        print("✅ نصب کامل شد! وضعیت کامل: hsctl status   |   عیب‌یابی: hsctl doctor")
-        return C.EXIT_OK
+        if final_state in ("verified", "full_success"):
+            return C.EXIT_OK
+        # service_not_ready / pending_verification → کد ۴ (FACTS §10):
+        # سرویس/زیرساخت موردنیاز هنوز آماده/تأیید نیست.
+        return C.EXIT_MISSING
 
     # ├── تصمیم حالت ------------------------------------------------------------
 
@@ -530,22 +572,26 @@ class InstallFlow:
         return "بسته‌ها آماده‌اند."
 
     def _step_headscale(self, step: Step) -> str:
-        """گام ۱۰: دانلود + راستی‌آزمایی + نصب بسته headscale."""
+        """گام ۱۰: دانلود + راستی‌آزمایی «الزامی» + نصب بستهٔ headscale (اصلاح ۴.۵).
+
+        SHA-256 در همهٔ مسیرها الزامی است (تعاملی/غیرتعاملی، نصب تازه/ارتقا،
+        dry-run). اگر checksum رسمی برای نسخه+معماری دقیق به‌دست نیاید، همین‌جا
+        با NeedsActionError متوقف می‌شویم — هیچ گزینهٔ «ادامه بدون چک‌سام» وجود
+        ندارد (این یک الزام امنیتی است).
+        """
         ans = self.answers
         version = self.resources.get("target_version")
         sha256 = self.resources.get("target_sha256")
-        if not version:
+        if not version or not sha256:
+            # resolve_target_version در نبود checksum رسمی خودش متوقف می‌کند.
             version, sha256 = hs_installer.resolve_target_version(ans.headscale_version or None)
         current = hs_installer.current_version()
         if current == version:
-            print(f"  headscale نسخه {current} از قبل نصب است؛ دانلود لازم نیست.")
+            print(f"  headscale نسخهٔ {current} از قبل نصب است؛ دانلود لازم نیست.")
             self.state.data["version"] = current
-            return f"نسخه {current} موجود است."
-
-        if sha256 is None:
-            print(f"  ⚠ {fmt('checksum_unknown')}")
-            if not self.non_interactive and not confirm("بدون راستی‌آزمایی checksum ادامه می‌دهید؟", default=False):
-                raise InstallCancelled()
+            return f"نسخهٔ {current} موجود است."
+        if sha256 is None:  # محافظ دفاعی — resolve دیگر هرگز None برنمی‌گرداند
+            raise NeedsActionError(fmt("checksum_mandatory"))
 
         arch = hs_installer._arch()
         from hem.headscale import releases
@@ -559,10 +605,10 @@ class InstallFlow:
             installed = hs_installer.current_version()
             if installed != version:
                 raise NeedsActionError(
-                    f"نسخه نصب‌شده ({installed}) با نسخه هدف ({version}) یکی نیست."
+                    f"نسخهٔ نصب‌شده ({installed}) با نسخهٔ هدف ({version}) یکی نیست."
                 )
         else:
-            print(f"[dry-run] دانلود → {dest} و نصب با apt")
+            print(f"[dry-run] دانلود → {dest} و نصب با apt (راستی‌آزمایی SHA-256 الزامی)")
         self.state.data["version"] = version
         return f"headscale {version} نصب شد."
 
@@ -611,7 +657,8 @@ class InstallFlow:
             return "فایروال خاموش ماند (انتخاب کاربر)."
         ssh_port = self.answers.ssh_port or firewall.detect_ssh_port()
         added, problem = firewall.firewall_setup(
-            ssh_port, self.answers.embedded_derp, dry_run=self.dry_run
+            ssh_port, self.answers.embedded_derp, dry_run=self.dry_run,
+            state=self.state.data,
         )
         if problem:
             raise NeedsActionError(problem)
@@ -633,33 +680,53 @@ class InstallFlow:
         return "سرویس فعال شد."
 
     def _step_health(self, step: Step) -> str:
-        """گام ۱۵: تست /health + headscale health + ساخت اولین کاربر."""
+        """گام ۱۵: تست سلامت + ساخت اولین کاربر — با ثبت نتیجهٔ هر چک (اصلاح ۴.۴).
+
+        نتیجهٔ تک‌تک چک‌ها (سلامت محلی، HTTPS بیرونی، headscale health، فعال‌بودن
+        سرویس) در state ثبت می‌شود تا جمع‌بندی نهایی و گزارش md صادقانه باشند.
+        """
         from hem.headscale import ctl
 
-        url = (
-            f"https://{self.answers.domain}/health"
-            if self.answers.use_https
-            else f"http://127.0.0.1:{C.PORT_HS_LISTEN}/health"
-        )
+        local_url = f"http://127.0.0.1:{C.PORT_HS_LISTEN}/health"
+        external_url = f"https://{self.answers.domain}/health"
+        local_ok = False
         https_ok = False
-        if not self.dry_run:
+        hs_health_ok = False
+        if self.dry_run:
+            print(f"[dry-run] تست سلامت محلی: {local_url}")
+            if self.answers.use_https:
+                print(f"[dry-run] تست سلامت بیرونی: {external_url}")
+            print(f"[dry-run] ساخت اولین کاربر (در صورت نبود): {self.answers.first_user}")
+        else:
             import urllib.request
 
+            # چک محلی — در هر دو حالت (با/بدون HTTPS) سرور باید روی پورت محلی جواب بدهد
             try:
-                with urllib.request.urlopen(url, timeout=15) as resp:
-                    https_ok = resp.status == 200
+                with urllib.request.urlopen(local_url, timeout=15) as resp:
+                    local_ok = resp.status == 200
             except OSError as exc:
-                print(f"  ⚠ پاسخ {url} دریافت نشد ({exc}) — اگر نصب تازه است، صدور گواهی چند دقیقه طول می‌کشد.")
-        if https_ok:
-            print(f"  ✓ پاسخ سلامت از {url} درست بود.")
-        try:
-            if not self.dry_run:
+                print(f"  ⚠ پاسخ {local_url} دریافت نشد ({exc}).")
+            if local_ok:
+                print(f"  ✓ سلامت محلی ({local_url}) درست بود.")
+            # چک بیرونی — فقط در حالت HTTPS معنا دارد
+            if self.answers.use_https:
+                try:
+                    with urllib.request.urlopen(external_url, timeout=15) as resp:
+                        https_ok = resp.status == 200
+                except OSError as exc:
+                    print(
+                        f"  ⚠ پاسخ {external_url} دریافت نشد ({exc}) — "
+                        "اگر نصب تازه است، صدور گواهی چند دقیقه طول می‌کشد."
+                    )
+                if https_ok:
+                    print(f"  ✓ سلامت بیرونی ({external_url}) درست بود.")
+            try:
                 print("  " + ctl.health().strip().replace("\n", "\n  ")[:500])
-        except Exception as exc:  # noqa: BLE001
-            print(f"  ⚠ headscale health خطا داد: {exc}")
-        # اولین کاربر
-        try:
-            if not self.dry_run:
+                hs_health_ok = True
+            except Exception as exc:  # noqa: BLE001
+                print(f"  ⚠ headscale health خطا داد: {exc}")
+            # اولین کاربر
+            try:
                 users = ctl.users_list()
                 if not users:
                     ctl.users_create(self.answers.first_user)
@@ -667,11 +734,49 @@ class InstallFlow:
                 else:
                     names = ", ".join(str(u.get("name")) for u in users[:5])
                     print(f"  کاربران موجود: {names}")
-            else:
-                print(f"[dry-run] ساخت اولین کاربر (در صورت نبود): {self.answers.first_user}")
-        except Exception as exc:  # noqa: BLE001
-            raise NeedsActionError(f"ساخت/خواندن کاربران ناموفق بود: {exc}")
-        return "سلامت شبکه تأیید شد."
+            except Exception as exc:  # noqa: BLE001
+                raise NeedsActionError(f"ساخت/خواندن کاربران ناموفق بود: {exc}")
+        # ثبت نتیجهٔ هر چک در state — مبنای وضعیت نهایی صادقانه (اصلاح ۴.۴)
+        self.state.data["health"] = {
+            "checked_at": time.strftime("%Y-%m-%d %H:%M:%S"),
+            "simulated": self.dry_run,
+            "local_url": local_url,
+            "local_ok": local_ok,
+            "use_https": bool(self.answers.use_https),
+            "https_url": external_url if self.answers.use_https else "",
+            "https_ok": https_ok,
+            "hs_health_ok": hs_health_ok,
+            "service_active": (not self.dry_run) and services.service_active(C.HEADSCALE_UNIT),
+            "dns_ok": self.state.data.get("dns_ok"),
+        }
+        return "بررسی‌های سلامت ثبت شد (نتیجهٔ نهایی در جمع‌بندی)."
+
+    def _final_install_state(self) -> str:
+        """محاسبهٔ وضعیت نهایی صادقانه از دادهٔ ثبت‌شدهٔ گام‌ها (اصلاح ۴.۴).
+
+        قواعد:
+          * full_success فقط با: سرویس فعال + سلامت محلی ۲۰۰ + (در حالت HTTPS:
+            پاسخ ۲۰۰ از https://دامنه/health) + DNS درست.
+          * DNS ناهمخوان/ردشده → حداکثر pending_verification (بیرونی تأییدنشده).
+          * سرویس غیرفعال یا سلامت محلی ناموفق → service_not_ready.
+          * شکست هر گام → partial_failure (در run تشخیص داده می‌شود).
+        """
+        h = self.state.data.get("health") or {}
+        service_ok = bool(h.get("service_active"))
+        local_ok = bool(h.get("local_ok"))
+        https_checked = bool(h.get("use_https"))
+        https_ok = bool(h.get("https_ok"))
+        dns_ok = self.state.data.get("dns_ok") is True
+        if not service_ok or not local_ok:
+            return "service_not_ready"
+        if https_checked and not https_ok:
+            return "pending_verification"
+        if not dns_ok:
+            return "pending_verification"
+        if https_checked and https_ok:
+            return "full_success"
+        # حالت بدون HTTPS: همهٔ چک‌های الزامیِ این پیکربندی پاس شده است
+        return "verified"
 
     def _step_report(self, step: Step) -> str:
         """گام ۱۶: ذخیره گزارش نصب."""
@@ -695,6 +800,38 @@ class InstallFlow:
             status = self.state.step_status(s)
             if status:
                 lines.append(f"- {STEP_TITLES[s]}: {status}")
+        # وضعیت نهایی + نتیجهٔ تک‌تک چک‌ها (اصلاح ۴.۴) — همان وضعیتی که
+        # جمع‌بندی کنسول نیز اعلام می‌کند؛ هرگز «موفق» نوشته نمی‌شود مگر واقعاً باشد.
+        if self.dry_run:
+            lines.append("- وضعیت نهایی: (dry-run — شبیه‌سازی، بدون بررسی واقعی)")
+        else:
+            final_state = self._final_install_state()
+            lines.append(f"- وضعیت نهایی نصب: {final_state}")
+            h = self.state.data.get("health") or {}
+            if h:
+                lines.append("- بررسی‌های سلامت:")
+                lines.append(
+                    f"  - سرویس فعال: {'بله' if h.get('service_active') else 'خیر'}"
+                )
+                lines.append(
+                    f"  - سلامت محلی ({h.get('local_url') or '—'}): "
+                    f"{'۲۰۰' if h.get('local_ok') else 'ناموفق'}"
+                )
+                if h.get("use_https"):
+                    lines.append(
+                        f"  - سلامت بیرونی ({h.get('https_url') or '—'}): "
+                        f"{'۲۰۰' if h.get('https_ok') else 'ناموفق/در انتظار'}"
+                    )
+                else:
+                    lines.append("  - سلامت بیرونی: (حالت بدون HTTPS — بررسی بیرونی انجام نمی‌شود)")
+                lines.append(
+                    f"  - DNS دامنه: "
+                    f"{'درست' if self.state.data.get('dns_ok') else 'ناهمخوان/در انتظار'}"
+                )
+                if h.get("use_https") and not h.get("https_ok"):
+                    lines.append(
+                        "  - توجه: دسترسی از بیرون «تأییدنشده» است تا آماده‌شدن DNS/گواهی TLS."
+                    )
         if not self.dry_run:
             report_dir.mkdir(parents=True, exist_ok=True)
             path.write_text("\n".join(lines), encoding="utf-8")

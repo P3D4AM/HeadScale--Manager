@@ -74,6 +74,9 @@ EXIT_OK = 0
 EXIT_ERROR = 1
 EXIT_INVALID = 2
 EXIT_NEED_ROOT = 3
+# کد ۴ — «سرویس/زیرساخت موردنیاز موجود نیست»؛ از نسخهٔ اصلاح ۴.۴ همچنین برای
+# وضعیت‌های پایانی نصب: service_not_ready و pending_verification به‌کار می‌رود
+# (نصب انجام شده ولی سرویس آماده نیست یا تأیید بیرونی DNS/TLS ناقص است).
 EXIT_MISSING = 4
 EXIT_NO_CONFIRM = 5
 

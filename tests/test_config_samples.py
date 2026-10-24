@@ -10,7 +10,7 @@ from pathlib import Path
 import pytest
 import yaml
 
-from hem.installer.answers import InstallAnswers, from_dict, load_from_file
+from hem.installer.answers import InstallAnswers, load_from_file
 
 REPO = Path(__file__).resolve().parents[1]
 EXAMPLE = REPO / "examples" / "hem-install.conf.example"

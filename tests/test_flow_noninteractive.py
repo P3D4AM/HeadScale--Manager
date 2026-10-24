@@ -6,7 +6,6 @@
   (د) gather واقعاً قبل از plan اجرا می‌شود (ترتیب STEP_ORDER + شبیه‌سازی).
 """
 
-import os
 import re
 import subprocess
 import sys

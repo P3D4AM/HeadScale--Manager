@@ -12,6 +12,7 @@ import json
 import os
 import re
 import sys
+from pathlib import Path
 
 from hem import __version__
 from hem import constants as C
@@ -573,7 +574,18 @@ def cmd_restore(args) -> int:
 
 
 def cmd_update(args) -> int:
-    """به‌روزرسانی headscale — نسخه‌به‌نسخه، با پشتیبان و راهنمای بازگشت."""
+    """به‌روزرسانی headscale — نسخه‌به‌نسخه، با پشتیبان و rollback واقعی (اصلاح ۴.۷).
+
+    در شکست نصب/اعتبارسنجی/راه‌اندازیِ نسخهٔ جدید، بستهٔ قبلی واقعاً برمی‌گردد:
+    توقف سرویس → نصب مجدد deb قبلی → بازگرداندن پیکربندی (در صورت لزوم) →
+    راه‌اندازی و بررسی سلامت. اگر خود rollback هم شکست بخورد، هر دو شکست
+    صادقانه گزارش می‌شوند — هرگز «بازگشت انجام شد» ادعا نمی‌شود.
+    """
+    import json as _json
+    import shutil as _shutil
+    import time as _time
+    from pathlib import Path
+
     from hem.core.runner import Step, StepRunner
     from hem.headscale import installer as hs_installer
     from hem.headscale import releases
@@ -617,9 +629,13 @@ def cmd_update(args) -> int:
             print("✗ در حالت غیرتعاملی از --yes استفاده کنید.")
             return C.EXIT_NO_CONFIRM
 
-    runner = StepRunner(title=f"به‌روزرسانی headscale {current} → {target}", total=5)
+    runner = StepRunner(title=f"به‌روزرسانی headscale {current} → {target}", total=6)
     backup_path = None
-    failed = False
+    old_deb_path: Path | None = None
+    failed_step: str | None = None
+    # دایرکتوری شناسنامهٔ بازگشت (اصلاح ۴.۷) — همهٔ مسیرهای rollback اینجا ثبت می‌شوند
+    rollback_dir = Path(C.BACKUP_DIR) / "updates" / _time.strftime("%Y%m%d-%H%M%S")
+    config_backup_path = rollback_dir / "config.yaml.pre-update"
 
     def _backup(step: Step):
         nonlocal backup_path
@@ -628,19 +644,69 @@ def cmd_update(args) -> int:
         backup_path = create_backup()
         return str(backup_path)
 
+    def _prepare_rollback(step: Step):
+        """آماده‌سازی واقعی بازگشت: بستهٔ فعلی + پشتیبان پیکربندی + manifest (اصلاح ۴.۷).
+
+        اگر بستهٔ فعلی نه در کش apt باشد و نه با checksum رسمی قابل دانلود،
+        ارتقا «قبل از هر تغییری» متوقف می‌شود (rollback بدون بستهٔ قبلی ممکن نیست).
+        """
+        nonlocal old_deb_path
+        arch = hs_installer._arch()
+        dest = Path("/var/tmp") / f"hem-rollback-headscale-{current}-{arch}.deb"
+        if not dest.exists():
+            cached = Path("/var/cache/apt/archives") / releases.deb_filename(current, arch)
+            if cached.exists():
+                _shutil.copy2(cached, dest)
+                print(f"  بستهٔ فعلی از کش apt کپی شد: {cached}")
+            else:
+                # checksum الزامی (اصلاح ۴.۵) — در نبود checksum رسمی، توقف کامل
+                sha256 = hs_installer.mandatory_checksum(current)
+                url = releases.deb_url(current, arch)
+                print(f"  دانلود بستهٔ فعلی برای بازگشت: {url}")
+                hs_installer.download(url, dest, expected_sha256=sha256)
+        old_deb_path = dest
+        manifest = {
+            "old_version": current,
+            "new_version": target,
+            "deb_path": str(dest),
+            "config_backup": "",
+            "db_backup": str(backup_path) if backup_path else "",
+            "created_at": _time.strftime("%Y-%m-%d %H:%M:%S"),
+        }
+        # پشتیبان مستقیم پیکربندی فعلی (برای بازگردانی سریع در rollback)
+        cfg = Path(C.HEADSCALE_CONFIG_PATH)
+        if cfg.exists():
+            try:
+                rollback_dir.mkdir(parents=True, exist_ok=True)
+                _shutil.copy2(cfg, config_backup_path)
+                manifest["config_backup"] = str(config_backup_path)
+            except OSError as exc:
+                print(f"  ⚠ پشتیبان مستقیم پیکربندی ممکن نشد ({exc}) — پشتیبان کامل بالا مرجع است.")
+        try:
+            rollback_dir.mkdir(parents=True, exist_ok=True)
+            (rollback_dir / "manifest.json").write_text(
+                _json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8"
+            )
+            print(f"  شناسنامهٔ بازگشت: {rollback_dir / 'manifest.json'}")
+        except OSError as exc:
+            print(f"  ⚠ نوشتن manifest بازگشت ناموفق بود ({exc}).")
+        return f"بستهٔ قبلی آمادهٔ بازگشت: {dest.name}"
+
     def _stop(step: Step):
         from hem.system import services
 
         services.systemctl("stop", C.HEADSCALE_UNIT)
 
     def _install(step: Step):
+        # checksum الزامی (اصلاح ۴.۵) — نسخهٔ بدون checksum رسمی هرگز نصب نمی‌شود
         version, sha256 = hs_installer.resolve_target_version(target)
         url = releases.deb_url(version, hs_installer._arch())
-        from pathlib import Path
-
         dest = Path("/var/tmp") / f"hem-headscale-{version}.deb"
         hs_installer.download(url, dest, expected_sha256=sha256)
         hs_installer.install_deb(dest)
+        installed = hs_installer.current_version()
+        if installed != version:
+            raise RuntimeError(f"نسخهٔ نصب‌شده ({installed}) با نسخهٔ هدف ({version}) یکی نیست.")
 
     def _configtest(step: Step):
         from hem.headscale.config import validate_config
@@ -658,21 +724,47 @@ def cmd_update(args) -> int:
 
     for step, fn in (
         (Step("پشتیبان کامل قبل از ارتقا", risk="safe"), _backup),
+        (Step("آماده‌سازی بازگشت (بستهٔ فعلی)", risk="safe"), _prepare_rollback),
         (Step("توقف سرویس", risk="risky"), _stop),
         (Step("دانلود و نصب نسخه جدید", risk="risky"), _install),
         (Step("اعتبارسنجی پیکربندی", risk="safe"), _configtest),
         (Step("راه‌اندازی و بررسی سلامت", risk="safe"), _start),
     ):
         if not runner.run(step, fn):
-            failed = True
+            failed_step = step.name
             break
 
-    if failed or not runner.summary():
-        print("✗ به‌روزرسانی کامل نشد. برای بازگشت به وضعیت قبل:")
+    if failed_step is not None or not runner.summary():
+        # ── شکست ارتقا: گزارش صادقانه + بازگشت واقعی (اصلاح ۴.۷) ─────────
+        print("─" * 60)
+        print(f"✗ {fmt('update_failed_title')} (گام: {failed_step or 'نامشخص'})")
         if backup_path:
-            print(f"    sudo hsctl restore {backup_path}")
+            print(f"    پشتیبان کامل پیش از ارتقا: {backup_path}")
+        if old_deb_path is not None:
+            print(fmt("update_rollback_started"))
+            rollback_ok = False
+            try:
+                rollback_ok = _run_update_rollback(
+                    current=current,
+                    old_deb_path=old_deb_path,
+                    config_backup_path=config_backup_path,
+                    restore_config=(failed_step == "اعتبارسنجی پیکربندی"),
+                )
+            except Exception as exc:  # noqa: BLE001 — گزارش صادقانه، نه فروافتادن
+                print(f"✗ {fmt('update_rollback_failed')} ({exc})")
+            if rollback_ok:
+                print(f"✓ {fmt('update_rollback_ok', version=current)}")
+                if backup_path:
+                    print(f"    پشتیبان کامل (در صورت نیاز): sudo hsctl restore {backup_path}")
+            else:
+                # هرگز «بازگشت انجام شد» ادعا نمی‌شود — هر دو شکست صادقانه می‌مانند
+                print(f"✗ {fmt('update_rollback_failed')}")
+                print("    وضعیت سرور را بررسی کنید: hsctl doctor  |  لاگ: hsctl logs")
+                if backup_path:
+                    print(f"    پشتیبان کامل: sudo hsctl restore {backup_path}")
         else:
-            print("    sudo hsctl backup list  →  sudo hsctl restore <فایل>")
+            # شکست در آماده‌سازی — هنوز هیچ تغییری روی سرویس/بسته اعمال نشده است
+            print(f"✗ {fmt('update_rollback_not_prepared')}")
         return C.EXIT_ERROR
 
     state = StateManager()
@@ -683,6 +775,63 @@ def cmd_update(args) -> int:
         pass
     print(f"✓ ارتقا به headscale {target} کامل شد.")
     return C.EXIT_OK
+
+
+def _run_update_rollback(current: str, old_deb_path: Path, config_backup_path: Path,
+                         restore_config: bool) -> bool:
+    """بازگشت واقعی به نسخهٔ قبلی با StepRunner (اصلاح ۴.۷) — فقط از cmd_update.
+
+    مراحل: توقف سرویس → نصب مجدد deb قبلی (apt با DEBIAN_FRONTEND=noninteractive)
+    → بازگرداندن پیکربندی پیش از ارتقا (فقط اگر شکست مربوط به configtest بود)
+    → راه‌اندازی و بررسی سلامت. خروجی False یعنی rollback کامل نشد.
+    """
+    import shutil as _shutil
+    from pathlib import Path
+
+    from hem.core.runner import Step, StepRunner
+    from hem.headscale import installer as hs_installer
+    from hem.system import services
+
+    rb = StepRunner(title=f"بازگشت به headscale {current}", total=4)
+
+    def _rb_stop(step: Step):
+        if services.service_active(C.HEADSCALE_UNIT):
+            services.systemctl("stop", C.HEADSCALE_UNIT)
+            return "سرویس متوقف شد."
+        return "سرویس از قبل متوقف بود."
+
+    def _rb_install(step: Step):
+        if not old_deb_path or not Path(old_deb_path).exists():
+            raise RuntimeError("بستهٔ نسخهٔ قبلی در دسترس نیست.")
+        hs_installer.install_deb(old_deb_path)
+        ver = hs_installer.current_version()
+        if ver != current:
+            raise RuntimeError(f"نسخهٔ بازگردانده‌شده ({ver}) با نسخهٔ قبلی ({current}) یکی نیست.")
+        return f"بستهٔ {current} نصب شد."
+
+    def _rb_config(step: Step):
+        if not restore_config:
+            return "پیکربندی دست‌نخورده ماند (شکست مربوط به پیکربندی نبود)."
+        if config_backup_path.exists():
+            _shutil.copy2(config_backup_path, C.HEADSCALE_CONFIG_PATH)
+            return "پیکربندی پیش از ارتقا بازگردانده شد."
+        raise RuntimeError("پشتیبان پیکربندی پیش از ارتقا پیدا نشد.")
+
+    def _rb_start(step: Step):
+        services.systemctl("start", C.HEADSCALE_UNIT)
+        if not services.wait_healthy(C.HEADSCALE_UNIT, 60):
+            raise RuntimeError("سرویس پس از بازگشت بالا نیامد (لاگ: hsctl logs)")
+        return "سرویس سالم بالا آمد."
+
+    for step, fn in (
+        (Step("توقف سرویس", risk="risky"), _rb_stop),
+        (Step("نصب بستهٔ نسخهٔ قبلی", risk="risky"), _rb_install),
+        (Step("بازگرداندن پیکربندی (در صورت نیاز)", risk="risky"), _rb_config),
+        (Step("راه‌اندازی و بررسی سلامت", risk="safe"), _rb_start),
+    ):
+        if not rb.run(step, fn):
+            return False
+    return rb.summary()
 
 
 def cmd_config(args) -> int:
@@ -860,9 +1009,13 @@ def cmd_uninstall(args) -> int:
         return "بلوک حذف و Caddy بارگذاری مجدد شد."
 
     def _remove_firewall(step: Step):
-        for rule in rules:
-            firewall.ufw_delete(rule)
-        return f"{len(rules)} قاعده حذف شد."
+        # بازگشت واقعی کارهای فایروال خودمان (اصلاح ۴.۶): فقط قواعد افزودهٔ خودِ
+        # ابزار حذف می‌شوند و اگر خودمان ufw را فعال کرده بودیم، دوباره غیرفعال می‌شود.
+        removed, disabled = firewall.firewall_rollback(state)
+        message = f"{removed} قاعده حذف شد."
+        if disabled:
+            message += " (ufw که خودمان فعال کرده بودیم، دوباره غیرفعال شد)"
+        return message
 
     def _stop_service(step: Step):
         services.systemctl("stop", C.HEADSCALE_UNIT)
