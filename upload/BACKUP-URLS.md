@@ -75,3 +75,29 @@ d8c33cdaa9512e49c144150d30159e320a47af0b53330b5c5dd9498f30a6c769  HeadscaleEasyM
 ### یادداشت
 - این نسخه رفع دو باگ گزارش‌شدهٔ کاربر است: خطای نحوی install.ps1 (ریشه: UTF-8 بدون BOM + LF در خوانش ANSI → کوتیشن‌های یونی‌کد U+2018..U+201E به‌عنوان جداکنندهٔ رشتهٔ Parser) و بسته‌شدن سریع EXE (ریشه: دابل‌کلیک بدون متغیر → fail-closed → exit≠0 فوری؛ اصلاح: قاعدهٔ دسکتاپ برای بستهٔ ویندوزی + لاگ فایل تشخیصی).
 - جزئیات کامل در CHANGELOG (بخش 0.3.2-beta.2) و release notes.
+
+---
+
+## v0.3.2-beta.3 (۲۰۲۶-۱۰-۲۵) — «ترمینال و کامنت‌ها فقط انگلیسی» (کامیت ec81a08 روی develop — هنوز push نشده: توکن این سندباکس باطل است؛ جزئیات در worklog تسک ۱۹)
+
+### بستهٔ ویندوزی (تست‌شده با Parser واقعی PowerShell + ۳۰ چک زندهٔ باینری هم‌سورس)
+| فایل | نشانی | ماندگاری |
+|---|---|---|
+| HeadscaleEasyManager-v0.3.2-beta.3-win64.zip (۳۸MB) | https://gofile.io/d/qzWvs2q2 | بلندمدت (gofile.io) |
+| HeadscaleEasyManager-v0.3.2-beta.3-win64.zip | https://tmpfiles.org/wHA3VCyigIcB/headscaleeasymanager-v0.3.2-beta.3-win64.zip | ۶۰ دقیقه (tmpfiles.org) |
+| HeadscaleEasyManager-v0.3.2-beta.3-win64.zip.sha256 | https://gofile.io/d/ltTDOe22 | بلندمدت (gofile.io) |
+
+### بستهٔ سرور (tar.gz — gates کامل سبز: docs:generate + tsc + lint)
+| فایل | نشانی | ماندگاری |
+|---|---|---|
+| headscale-easy-manager-v0.3.2-beta.3.tar.gz (۷۹۲K) | https://gofile.io/d/flLUet1W | بلندمدت (gofile.io) |
+| headscale-easy-manager-v0.3.2-beta.3.tar.gz | https://d.uguu.se/JqBLZWBu.gz | ۴۸ ساعت (uguu.se) |
+| headscale-easy-manager-v0.3.2-beta.3.tar.gz.sha256 | https://gofile.io/d/pMcX22tX | بلندمدت (gofile.io) |
+
+### چک‌سام‌ها (SHA-256)
+```
+77cc3e28f90c5539edcffcdb409304fa62ff126c8176934e4f9b70f0193f5331  HeadscaleEasyManager-v0.3.2-beta.3-win64.zip
+67484d37ec3103d5875498d07cf8f4cd249da786c01f42988af7374ef89f7ff1  headscale-easy-manager-v0.3.2-beta.3.tar.gz
+```
+- md5 زیپ آپلودشده با پاسخ سرور gofile تطبیق داده شد (f6df09b1…) — آپلود سالم است.
+- صادقانه: انتشار GitHub Release این نسخه انجام نشد (توکن push این سندباکس «Invalid username or token» می‌دهد — به‌احتمال زیاد هم‌زمان با ارسال مجدد توکن به جلسهٔ موازی، توکن قدیمی regenerate شده). پس از رفع توکن، همین کامیت (ec81a08) باید push و از همان، Release ساخته شود.

@@ -715,3 +715,28 @@ Stage Summary:
 - Files changed (this task): all 19 files in test/ (allowlist, auth, backupctl, connect, console, desktop-launch, exepath, headscale, installer, jobs, packaged, probe, ps1-encoding, recovery, secrets, security-auth, ui-serving, helpers.ts, server.ts) + test/fixtures/gen.py — every comment, describe/test title, and helper throw-message is now English.
 - Remaining Persian in test/ = assertions/fixtures/parsed-output ONLY (53 lines, 54 string literals): Persian API/UI assertion strings, Persian fixture data (profile names, job summaries, FIXTURE_HTML UI stubs, install.sh stub content), and real Persian hsctl/installer output strings fed to parsers — all intentionally Persian per rule 2. test/shim/headscale untouched (simulates the real Persian hsctl CLI).
 - Suite: 195 pass / 0 fail (full run, real SSH test server + real headscale v0.29.5). tsc --noEmit: exit 0. Zero logic/structure changes (skeleton-verified); translation-only pass.
+
+---
+Task ID: 19
+Agent: Z.ai Code (Main Orchestrator)
+Task: دستور مالک پس از نصب v0.3.2-beta.2 روی ویندوز: «از زبان فارسی در کامنت‌ها، توضیحات CLI و کلاً ترمینال استفاده نکن» — اجرای کامل این سیاست روی بستهٔ ویندوزی + رگرسیون + ساخت v0.3.2-beta.3
+
+Work Log:
+- تشخیص خروجی کاربر: نصب beta.2 «موفق» بود؛ متن فارسی ترمینال همان خروجی نصب‌کننده بود و «Press Enter to continue...:» از خودِ اسکریپت نیست — پیام استاندارد حالت «Run with PowerShell» ویندوز ۱۱ است (پنجره را باز نگه می‌دارد). ریشهٔ نارضایتی: متن فارسی/RTL در کنسول ویندوز + طبقهٔ خطر mojibake.
+- قاعدهٔ زبان قطعی و قفل‌شده: انگلیسی = هر چیزی که در ترمینال/کنسول رندر می‌شود (کنسول agent، پیام‌گیر خطا، install/uninstall.ps1، لاگ build/release، عنوان تست‌ها) + تمام کامنت‌های کد agent؛ فارسی = UI مرورگری، پیام‌های API در UI (FA_MESSAGES و اعتبارسنجی)، README-WINDOWS-FA.txt (Notepad)، docs/fa و CHANGELOG.
+- قالب‌های install.ps1/uninstall.ps1 بازنویسی کامل انگلیسی + «ASCII خالص» (صفر بایت غیر-ASCII) — همان منطق، همان قرارداد بایت (BOM + CRLF + بدون کوتیشن هوشمند)؛ Parser واقعی pwsh: صفر خطا. تست جدید T5b: انگلیسی‌بودن + ASCII خالص برای همیشه قفل شد.
+- index.ts (کنسول + کامنت + Popup) و config.ts (پیام‌های سیاست auth که به کنسول می‌روند + کامنت‌ها) انگلیسی شدند؛ installerRootErrorMessage عمداً فارسی ماند (UI ویزارد).
+- سه زیرعامل موازی: 18-a (کامنت‌های ۲۵ فایل src/ — کد بدون کامنت بایت‌به‌بایت یکسان)، 18-b (build-windows.sh + release.sh — الگوهای grep فارسی README عمداً حفظ شد)، 18-c (عنوان/کامنت/پیام خطای ۲۰ فایل test/ — ادعاهای رشته‌های UI فارسی و فیکسچرها عمداً دست‌نخورده).
+- نگهبان‌های زندهٔ build که خروجی کنسول باینری را می‌گشتند به الگوی انگلیسی جدید به‌روز شدند («refuses to start»، «Listening on») + ۵ ادعای تست کنسولی + EADDRINUSE.
+- scripts/generate-docs.ts انگلیسی شد (پیام ترمینال + بنر فایل تولیدی) و docs-content.ts بازتولید شد (محتوای فصل‌ها فارسی می‌ماند — UI).
+- محیط تستِ با ریستِ سندباکس پاک‌شده بود و بازسازی شد: pwsh 7.4.6 + headscale v0.29.5 واقعی (sha=e979d27f… با checksums رسمی تطبیق داده شد) + config محلی + seed کاربر id=1 + سرور SSH آزمایشی.
+- گیت‌ها: agent ۱۹۵/۱۹۵ (۱۹۴ + T5b)؛ tsc ریشه و agent صفر؛ eslint صفر؛ pytest ۱۰۴/۱۰۴؛ docs:generate ۱۵ فصل.
+- نسخه 0.3.2-beta.3 همه‌جا (root/agent package.json، AGENT_VERSION، __init__.py، pyproject، README-FA) + ورودی CHANGELOG با محدودهٔ صادقانه.
+- حوادث محیطی: (۱) چک‌اوت‌های ۶۰ثانیه‌ای supervisor به main دوباره رخ داد — یک‌بار وسطِ commit (کامیت روی main محلی نشست!) و یک‌بار راسِ build؛ با cherry-pick روی develop + sync دائمی main=develop رفع شد (remote main هرگز لمس نشد). (۲) build پس‌زمینه با nohup توسط wrapper کشته می‌شد — با setsid حل شد. (۳) اولین build قبل از commit اجرا شده بود و installer/ زیپ از درخت کهنهٔ main ساخته بود — با قانون «اول commit، بعد build» و بازسازی، رفع شد.
+- خروجی نهایی از کامیت دقیق ec81a08: zip ویندوزی (sha=77cc3e28…، GUARD OK×2، PARSE OK×2 با Parser واقعی، ۳۰ چک زندهٔ [OK]، ۱۵۵ فایل، installer/__init__.py=beta.3 و CHANGELOG beta.3 داخل زیپ راستی‌آزمایی شد) + tar.gz سرور (sha=67484d37…، ۳۳۲ فایل، gates کامل).
+- آپلود پشتیبان (قانون سه سایت): zip → gofile (qzWvs2q2، بلندمدت؛ md5 با پاسخ سرور تطبیق شد) + tmpfiles (۶۰دق)؛ tar.gz → gofile (flLUet1W) + uguu (JqBLZWBu، ۴۸س)؛ هر دو .sha256 هم gofile. BACKUP-URLS.md به‌روز شد. uguu زیپ را رد کرد (filetype) — طبق سابقه.
+
+Stage Summary:
+- سیاست «ترمینال/کامنت فقط انگلیسی» روی کل بستهٔ ویندوزی کامل و تست‌قفل شد؛ همهٔ گیت‌ها سبز؛ v0.3.2-beta.3 از کامیت ec81a08 ساخته و راستی‌آزمایی و به سه سایت پشتیبان آپلود شد.
+- مسدود (صادقانه): push به origin/develop ناموفق — «Invalid username or token»؛ توکن قدیمیِ URL ریموت این کلون باطل شده (جلسهٔ موازی Task 18 با توکن تازهٔ ۹۳ نویسه‌ای ساعت ۱۵:۱۲ push موفق داشت؛ آن توکن در سندباکس من نیست: .env فقط DATABASE_URL دارد و upload/github-credentials.txt وجود ندارد). کامیت ec81a08 آمادهٔ push است؛ پس از ارسال توکن معتبر (یا push از جلسهٔ دارای توکن)، Release v0.3.2-beta.3 باید از همان کامیت ساخته شود.
+- عمداً خارج از محدودهٔ این جلسه (گزارش شد): کامنت‌های فارسی مخزن پایتون نصب‌کننده (۶۰ فایل؛ خروجی CLI آن در ویزاردِ مرورگر نمایش می‌یابد) و کامنت‌های فارسی سورس UINext.js (۱۱۹ فایل، درهم‌آمیخته با رشته‌های UI که باید فارسی بمانند) — هرکدام گذر دقیق جداگانه می‌خواهند.
