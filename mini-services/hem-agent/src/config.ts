@@ -1,9 +1,10 @@
 import * as fs from "node:fs";
 import { homedir } from "node:os";
 import * as path from "node:path";
+import { inCompiledBinary } from "./exepath";
 
-/** نسخهٔ agent — هماهنگ با package.json (v0.3.1: اصلاحات پیش از انتشار) */
-export const AGENT_VERSION = "0.3.1";
+/** نسخهٔ agent — هماهنگ با package.json (v0.3.2: رفع باگ UI ویندوزی) */
+export const AGENT_VERSION = "0.3.2";
 
 /** آدرس bind (فقط 127.0.0.1 در حالت عادی) */
 export function agentHost(): string {
@@ -62,9 +63,9 @@ function processExeDir(): string {
   return path.dirname(process.execPath);
 }
 
-/** true وقتی از داخل باینری کامپایل‌شده اجرا می‌شویم (fs مجازی bun) */
-function inCompiledBinary(): boolean {
-  return import.meta.dir.startsWith("/$bunfs");
+/** true وقتی از داخل باینری کامپایل‌شده اجرا می‌شویم (fs مجازی bun — $bunfs در هر دو پلتفرم) */
+function inCompiledBinaryRun(): boolean {
+  return inCompiledBinary(import.meta.dir);
 }
 
 export type InstallerRootCandidateSource = "env" | "packaged" | "dev";
@@ -89,8 +90,10 @@ export function installerRootCandidates(
   if (env) list.push({ source: "env", path: path.resolve(env) });
   if (exeDir) list.push({ source: "packaged", path: path.join(exeDir, "installer") });
   const devSrc = (srcDir ?? "").trim();
-  // در باینری کامپایل‌شده، سورس داخل $bunfs است — کاندید توسعه معنا ندارد.
-  if (devSrc && !devSrc.startsWith("/$bunfs")) {
+  // در باینری کامپایل‌شده، سورس داخل fs مجازی bun ($bunfs) است — کاندید توسعه
+  // معنا ندارد. تشخیص عضویت «$bunfs» است، نه پیشوند پوزیکس (باگ ویندوزی v0.3.1:
+  // C:\$bunfs\root با startsWith("/$bunfs") رد نمی‌شد و کاندید بی‌معنای dev می‌ساخت).
+  if (devSrc && !inCompiledBinary(devSrc)) {
     list.push({ source: "dev", path: path.resolve(devSrc, "..", "..", "..", "headscale-easy-manager") });
   }
   return list;
@@ -145,10 +148,10 @@ export function resolveInstallerRoot(
 /** وضعیت واقعیِ همین اجرا — برای پیام‌های خطای غنی و UX. */
 export function installerRootStatus(): InstallerRootStatus {
   const skipped: InstallerRootSkipped[] = [];
-  if (inCompiledBinary()) {
+  if (inCompiledBinaryRun()) {
     skipped.push({
       source: "dev",
-      reason: "در باینری کامپایل‌شده، سورس داخل فایل‌سیستم مجازی bun (/$bunfs) است",
+      reason: "در باینری کامپایل‌شده، سورس داخل فایل‌سیستم مجازی bun ($bunfs) است",
     });
   }
   return resolveInstallerRoot(

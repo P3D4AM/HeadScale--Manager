@@ -33,6 +33,10 @@ export interface TestStack {
 export interface BuildStackOpts {
   /** توکن اختیاری X-HEM-Token — برای تست‌های احراز هویت (v0.3.1 §4) */
   token?: string;
+  /** پوشهٔ UI واقعی (باید موجود باشد تا سرو شود) — پیش‌فرض: مسیر ناموجود */
+  uiDir?: string;
+  /** مسیر مورد انتظار UI برای صفحهٔ خطا (v0.3.2) — پیش‌فرض: همان uiDir */
+  uiDirExpected?: string;
 }
 
 export function buildTestStack(opts: BuildStackOpts = {}): TestStack {
@@ -43,6 +47,7 @@ export function buildTestStack(opts: BuildStackOpts = {}): TestStack {
   const profiles = new ProfileStore(home);
   const jobs = new JobManager();
   const manager = new SessionManager({ home, profiles, secrets, audit, redactor });
+  const uiDir = opts.uiDir ?? path.join(home, "ui-nonexistent");
   const app = createApp({
     manager,
     profiles,
@@ -51,7 +56,8 @@ export function buildTestStack(opts: BuildStackOpts = {}): TestStack {
     redactor,
     jobs,
     token: opts.token,
-    uiDir: path.join(home, "ui-nonexistent"),
+    uiDir,
+    uiDirExpected: opts.uiDirExpected ?? uiDir,
     version: AGENT_VERSION,
     startedAt: Date.now(),
   });
