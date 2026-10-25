@@ -14,11 +14,12 @@
 //        • GET /api/health → 200 correct JSON (not confused with serving the UI)
 //        • run log: ui: served (…) with the path next to the binary
 //
-// On Linux the $bunfs path is POSIX and on Windows C:\$bunfs — the Windows
-// path-detection scenario is separately locked in test/exepath.test.ts; here the
-// "real behavior of the packaged binary" is proven on the host it runs on.
-// It is portable (CI tests run it too; on Windows CI the Windows EXE itself is
-// compiled and executed).
+// On Linux the virtual path is /$bunfs/…; on real Windows the bundle is
+// mounted on a virtual drive rooted at ~BUN (e.g. B:\~BUN\root — the beta.4
+// discovery). The path-detection scenarios for both are locked in
+// test/exepath.test.ts; here the "real behavior of the packaged binary" is
+// proven on the host it runs on. It is portable (CI tests run it too; on
+// Windows CI the Windows EXE itself is compiled and executed).
 
 import { afterAll, beforeAll, expect, test } from "bun:test";
 import { spawn, execFileSync, type ChildProcess } from "node:child_process";
@@ -151,13 +152,21 @@ async function waitExited(ms: number): Promise<boolean> {
 // proofs — the packaged EXE + ui/ next to it
 // ---------------------------------------------------------------------------
 
-test("compiled binary: sees the ui/ next to itself — the \"ui: served\" log with the stage path (not $bunfs)", async () => {
+test("compiled binary: sees the ui/ next to itself — the \"ui: served\" log with the stage path (not the virtual fs)", async () => {
   await new Promise((res) => setTimeout(res, 200));
   expect(stdoutAll).toContain("ui: served");
-  expect(stdoutAll).toContain(path.join(stageDir, "ui"));
   expect(stdoutAll).not.toContain("ui: MISSING");
-  // bug regression: the virtual-fs path is never accepted as the ui location
+  // bug regression: the virtual-fs path is never accepted as the ui location —
+  // neither the POSIX marker nor the real-Windows virtual drive (beta.4)
   expect(stdoutAll).not.toContain("$bunfs");
+  expect(stdoutAll).not.toContain("~BUN");
+  // the served ui/ is OUR staged one, identified by the stage folder's unique
+  // mkdtemp suffix. Comparing full paths verbatim is NOT portable on Windows:
+  // os.tmpdir() can return the 8.3 short form (...\RUNNER~1\...) while the
+  // binary's process.execPath reports the long form (...\runneradmin\...) —
+  // same folder, different spelling. The random suffix is identical in both.
+  const norm = stdoutAll.replace(/\\/g, "/").toLowerCase();
+  expect(norm).toContain(`${path.basename(stageDir).toLowerCase()}/ui`);
 }, 30_000);
 
 test("compiled binary: GET /?token= → 303 + session Set-Cookie (no Max-Age)", async () => {
