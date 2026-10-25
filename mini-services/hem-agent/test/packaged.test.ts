@@ -102,13 +102,17 @@ beforeAll(async () => {
     stdoutAll += d.toString();
   });
 
-  // ۴) منتظر بالا آمدن — با توکنِ سفت‌شده، /api/health باید 401 بدهد (زنده + گیت‌دار)
+  // ۴) منتظر بالا آمدن — v0.3.2: /api/health عمومیِ حداقلی است (200 JSON)؛
+  // مسیرهای حساس مثل /api/profiles باید 401 بدهند (زنده + گیت‌دار)
   const deadline = Date.now() + 60_000;
   for (;;) {
     if (child.exitCode !== null) throw new Error(`باینری بسته‌پذیر مرد (exit=${child.exitCode}). لاگ:\n${stdoutAll}`);
     try {
       const r = await fetch(`${baseUrl}/api/health`, { signal: AbortSignal.timeout(2000) });
-      if (r.status === 401) break;
+      if (r.status === 200) {
+        const b = (await r.json()) as { ok?: boolean; service?: string };
+        if (b.ok === true && b.service === "hem-agent") break;
+      }
     } catch {
       /* هنوز بالا نیامده */
     }
@@ -184,14 +188,22 @@ test("باینری کامپایل‌شده: مسیر SPA ناشناخته هم i
   expect(await r.text()).toContain('lang="fa"');
 }, 30_000);
 
-test("باینری کامپایل‌شده: GET /api/health همچنان JSON صحیح — مستقل از UI", async () => {
+test("باینری کامپایل‌شده: GET /api/health همچنان JSON صحیح — مستقل از UI؛ عمومیِ حداقلی بدون توکن، کامل با توکن", async () => {
+  // بدون توکن: پاسخ عمومیِ حداقلی (فقط فیلدهای غیرحساس)
+  const r0 = await fetch(`${baseUrl}/api/health`);
+  expect(r0.status).toBe(200);
+  const body0 = (await r0.json()) as Record<string, unknown>;
+  expect(body0.ok).toBe(true);
+  expect(body0.service).toBe("hem-agent");
+  expect(Object.keys(body0).sort()).toEqual(["ok", "service", "version"].sort());
+  // با توکن: پاسخ کامل
   const r = await fetch(`${baseUrl}/api/health`, { headers: { "X-HEM-Token": TOKEN } });
   expect(r.status).toBe(200);
   expect((r.headers.get("content-type") ?? "").toLowerCase()).toContain("application/json");
   const body = (await r.json()) as { ok: boolean; service: string; version: string };
   expect(body.ok).toBe(true);
   expect(body.service).toBe("hem-agent");
-  expect(body.version).toMatch(/^0\.\d+\.\d+$/);
+  expect(body.version).toMatch(/^0\.\d+\.\d+(-[\w.]+)?$/);
 }, 30_000);
 
 test("باینری کامپایل‌شده: خاتمهٔ تمیز (SIGTERM → خروج صفر)", async () => {

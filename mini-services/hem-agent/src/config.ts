@@ -4,11 +4,19 @@ import * as path from "node:path";
 import { inCompiledBinary } from "./exepath";
 
 /** نسخهٔ agent — هماهنگ با package.json (v0.3.2: رفع باگ UI ویندوزی) */
-export const AGENT_VERSION = "0.3.2";
+export const AGENT_VERSION = "0.3.2-beta.1"; // پیش‌انتشار توسعه (develop) — شاخهٔ پایدار: main
 
-/** آدرس bind (فقط 127.0.0.1 در حالت عادی) */
+/** آدرس bind (پیش‌فرض loopback — دسترسی شبکه‌ای باید آگاهانه و با توکن باشد) */
 export function agentHost(): string {
   return process.env.HEM_AGENT_HOST || "127.0.0.1";
+}
+
+/** آیا آدرس bind فقط loopback است؟ (127.x / localhost / ::1 — حالت open فقط اینجا مجاز است) */
+export function isLoopbackHost(host: string): boolean {
+  const h = host.trim().toLowerCase();
+  if (h === "localhost" || h === "::1" || h === "[::1]") return true;
+  if (/^127\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(h)) return true;
+  return false;
 }
 
 /** پورت پیش‌فرض ۳۰۰۵ — از طریق دروازه با ?XTransformPort=3005 قابل دسترسی است */
@@ -27,6 +35,119 @@ export function agentHome(): string {
 export function agentToken(): string | undefined {
   const t = process.env.HEM_AGENT_TOKEN;
   return t && t.length > 0 ? t : undefined;
+}
+
+// ---------------------------------------------------------------------------
+// سیاست احراز هویت (v0.3.2 §2 — اصلاح امنیتی «عبور بدون توکن»)
+//
+// باگ: قبلاً اگر HEM_AGENT_TOKEN تنظیم نشده بود، middleware مربوط به /api
+// درخواست را «بدون احراز هویت» عبور می‌داد و WebSocket هم بی‌دفاع بود؛ یعنی
+// نبودن توکن یعنی سرویسِ باز — دقیقاً برعکسِ رفتار امن (fail-closed).
+//
+// مدل جدید — سه حالتِ صریح:
+//   • token: همهٔ /api (به‌جز health عمومیِ حداقلی) و همهٔ WebSocketها به
+//     هدر X-HEM-Token یا کوکی hem_token نیاز دارند (timing-safe).
+//   • open:  استثنای «مستند و محدودِ» توسعهٔ محلی — فقط با تنظیم صریح
+//     HEM_AGENT_AUTH=open و فقط روی آدرس loopback؛ در غیر این صورت
+//     راه‌اندازی با خطای روشن متوقف می‌شود.
+//   • حالت بدون توکن و بدون صراحت: سرویس «شروع نمی‌شود» (exit غیرصفر با
+//     پیام فارسی قابل‌فهم). لایهٔ API هم دفاعی 503 AUTH_NOT_CONFIGURED
+//     می‌دهد (defense-in-depth برای فراخوانی مستقیم createApp در تست‌ها).
+//
+// حالت دسکتاپ همیشه توکن‌دار است: توکن صریح، یا تولید تصادفیِ امنِ همان
+// اجرا (randomBytes(24)) — هرگز حالت open.
+// ---------------------------------------------------------------------------
+
+export type AgentAuthMode = "token" | "open";
+
+export interface AuthPlan {
+  mode: AgentAuthMode;
+  /** توکن فعال در حالت token (صریح یا تولیدشده برای همین اجرا) */
+  token?: string;
+  /** true = توکنِ تولیدشدهٔ همین اجرا (فقط دسکتاپ) */
+  tokenGenerated: boolean;
+  desktop: boolean;
+}
+
+export interface AuthPlanInput {
+  /** مقدار HEM_AGENT_AUTH (اختیاری — خالی یعنی تنظیم نشده) */
+  auth?: string;
+  /** مقدار HEM_AGENT_TOKEN (اختیاری — خالی یعنی تنظیم نشده) */
+  token?: string;
+  desktop: boolean;
+}
+
+export type AuthPlanResult = { ok: true; plan: AuthPlan } | { ok: false; code: string; message: string };
+
+/** اعتبارسنجی سیاست — تابع خالص و قابل تست؛ همهٔ ترکیب‌ها صریح و بی‌ابهام */
+export function resolveAuthPlan(input: AuthPlanInput): AuthPlanResult {
+  const auth = (input.auth ?? "").trim().toLowerCase();
+  const token = input.token && input.token.length > 0 ? input.token : undefined;
+
+  // مقدار نامعتبر HEM_AGENT_AUTH — هر چیزی به‌جز token/open رد می‌شود
+  if (auth && auth !== "token" && auth !== "open") {
+    return {
+      ok: false,
+      code: "AUTH_INVALID_POLICY",
+      message:
+        `مقدار HEM_AGENT_AUTH="${input.auth}" معتبر نیست. مقدارهای مجاز: token یا open ` +
+        "(یا اصلاً تنظیم نکنید تا با HEM_AGENT_TOKEN کار کند).",
+    };
+  }
+
+  if (auth === "open") {
+    if (input.desktop) {
+      return {
+        ok: false,
+        code: "AUTH_DESKTOP_REQUIRES_TOKEN",
+        message:
+          "حالت دسکتاپ همیشه با توکن کار می‌کند (صریح یا تولیدشده برای همین اجرا) و حالت open با آن سازگار نیست. " +
+          "HEM_AGENT_AUTH را حذف کنید.",
+      };
+    }
+    if (token) {
+      return {
+        ok: false,
+        code: "AUTH_OPEN_WITH_TOKEN",
+        message:
+          "HEM_AGENT_AUTH=open با HEM_AGENT_TOKEN هم‌زمان تنظیم شده‌اند — ترکیب مبهم است. " +
+          "برای احراز هویت، HEM_AGENT_AUTH را حذف کنید؛ برای توسعهٔ محلیِ بدون توکن، HEM_AGENT_TOKEN را حذف کنید.",
+      };
+    }
+    return { ok: true, plan: { mode: "open", token: undefined, tokenGenerated: false, desktop: false } };
+  }
+
+  if (auth === "token" && !token && !input.desktop) {
+    return {
+      ok: false,
+      code: "AUTH_TOKEN_MISSING",
+      message:
+        "HEM_AGENT_AUTH=token تنظیم شده اما HEM_AGENT_TOKEN خالی است. توکن را تنظیم کنید " +
+        "یا HEM_AGENT_AUTH را حذف کنید.",
+    };
+  }
+
+  // auth = "token" یا تنظیم‌نشده → سیاست token؛ توکن صریح یا (دسکتاپ) تولیدی
+  if (token || input.desktop) {
+    return { ok: true, plan: { mode: "token", token, tokenGenerated: !token && input.desktop, desktop: input.desktop } };
+  }
+
+  // هیچ توکنی نیست و صریحاً open هم نخواسته‌اند → شروع نمی‌کنیم (fail-closed)
+  return {
+    ok: false,
+    code: "AUTH_NOT_CONFIGURED",
+    message:
+      "هیچ توکنی تنظیم نشده است؛ سرویس بدون احراز هویت شروع نمی‌شود.\n" +
+      "  • برای اجرای واقعی: HEM_AGENT_TOKEN را با یک رمز تصادفی بلند تنظیم کنید.\n" +
+      "  • فقط برای توسعهٔ محلی (loopback): HEM_AGENT_AUTH=open را صریح تنظیم کنید — " +
+      "این حالت بدون احراز هویت و فقط روی 127.0.0.1 اجرا می‌شود.",
+  };
+}
+
+/** مقدار HEM_AGENT_AUTH از محیط (بدون اعتبارسنجی — اعتبارسنجی در resolveAuthPlan) */
+export function agentAuthPolicy(): string | undefined {
+  const v = process.env.HEM_AGENT_AUTH;
+  return v && v.trim().length > 0 ? v : undefined;
 }
 
 /**

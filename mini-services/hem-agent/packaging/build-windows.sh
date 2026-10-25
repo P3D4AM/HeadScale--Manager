@@ -389,14 +389,20 @@ r=0; grep -qi '^cache-control: *no-store' "$spa_hdr" || r=1
 grep -qi '^cache-control: *no-store' "$head_hdr" || r=1
 chk "index.html بدون کش (Cache-Control: no-store)" $r
 
-# --- ۴) توکن: کوکی کافی است؛ بدون توکن 401؛ XTransformPort بی‌ضرر است
+# --- ۴) توکن (مدل v0.3.2 §2): health عمومیِ حداقلی؛ مسیر حساس بدون توکن 401؛
+#        کوکی کافی است؛ XTransformPort بی‌ضرر است
 h_code=$(curl -s -o /dev/null -w '%{http_code}' -H "X-HEM-Token: $TOKEN" "http://127.0.0.1:$HEM_UI_PORT/api/health")
-c_code=$(curl -s -o /dev/null -w '%{http_code}' -H "Cookie: hem_token=$TOKEN" "http://127.0.0.1:$HEM_UI_PORT/api/health")
-n_code=$(curl -s -o /dev/null -w '%{http_code}' "http://127.0.0.1:$HEM_UI_PORT/api/health")
+c_code=$(curl -s -o /dev/null -w '%{http_code}' -H "Cookie: hem_token=$TOKEN" "http://127.0.0.1:$HEM_UI_PORT/api/profiles")
+n_code=$(curl -s -o /dev/null -w '%{http_code}' "http://127.0.0.1:$HEM_UI_PORT/api/profiles")
 g_code=$(curl -s -o /dev/null -w '%{http_code}' -H "X-HEM-Token: $TOKEN" "http://127.0.0.1:$HEM_UI_PORT/api/health?XTransformPort=$HEM_UI_PORT")
-r=0; [ "$h_code" = 200 ] || r=1; chk "هدر X-HEM-Token → 200" $r
+pub_body="$(curl -s "http://127.0.0.1:$HEM_UI_PORT/api/health")"
+r=0; [ "$h_code" = 200 ] || r=1; chk "هدر X-HEM-Token → 200 (health کامل)" $r
 r=0; [ "$c_code" = 200 ] || r=1; chk "کوکی hem_token (بدون هدر) → 200" $r
-r=0; [ "$n_code" = 401 ] || r=1; chk "بدون توکن → 401" $r
+r=0; [ "$n_code" = 401 ] || r=1; chk "مسیر حساس /api/profiles بدون توکن → 401" $r
+r=0; echo "$pub_body" | grep -q '"service":"hem-agent"' || r=1
+echo "$pub_body" | grep -q '"uptimeSec"' && r=1
+echo "$pub_body" | grep -q '"sessions"' && r=1
+chk "health بدون توکن → 200 «حداقلی» (فقط ok/service/version؛ بدون uptime/sessions)" $r
 r=0; [ "$g_code" = 200 ] || r=1; chk "XTransformPort نادیده گرفته می‌شود → 200" $r
 ver="$(curl -s -H "X-HEM-Token: $TOKEN" "http://127.0.0.1:$HEM_UI_PORT/api/health" | grep -oE '"version":"[^"]+"')"
 r=0; echo "$ver" | grep -q "\"$VERSION\"" || r=1; chk "نسخهٔ گزارش‌شدهٔ agent = $VERSION ($ver)" $r
@@ -427,6 +433,29 @@ chk "probe واقعی (دستورات زندهٔ سرور)" $r
 disc="$(curl -s -X POST -H "$AH" -H "$CT" -d "{\"sessionId\":\"$SID\"}" "http://127.0.0.1:$HEM_UI_PORT/api/disconnect")"
 r=0; echo "$disc" | grep -q '"ok":true' || r=1
 chk "قطع نشست" $r
+
+# --- ۶) v0.3.2 §2 — مدل fail-closed روی «همین باینری»: شروع نمی‌شود، نه سرویسِ باز
+# بدون توکن و بدون صراحت → exit≠0 + AUTH_NOT_CONFIGURED (پیام فارسی روشن).
+# توجه: تحت set -e، خروجِ عمدیِ غیرصفر با «|| RC=$?» جمع می‌شود تا اسکریپت نمرُد.
+REF_HOME2="$LINUX_DIR/refuse-home"
+rm -rf "$REF_HOME2"
+REF_LOG2="$LINUX_DIR/refuse2.log"
+REF_RC=0
+HEM_AGENT_PORT=31052 HEM_AGENT_HOME="$REF_HOME2" \
+  timeout 20 "$LINUX_DIR/hem-manager" > "$REF_LOG2" 2>&1 || REF_RC=$?
+r=0; { [ "$REF_RC" -ne 0 ] && [ "$REF_RC" -ne 124 ]; } || r=1
+chk "بدون توکن و بدون HEM_AGENT_AUTH → exit≠0 (fail-closed، نه سرویسِ باز)" $r
+r=0; grep -q 'AUTH_NOT_CONFIGURED' "$REF_LOG2" && grep -q 'شروع نمی‌شود' "$REF_LOG2" || r=1
+chk "  … با پیام روشن AUTH_NOT_CONFIGURED (فارسی)" $r
+# open + HEM_AGENT_HOST=0.0.0.0 → exit≠0 + خطای loopback (سرویس بی‌احراز هویت روی شبکه ممنوع):
+REF_LOG3="$LINUX_DIR/refuse3.log"
+REF_RC3=0
+HEM_AGENT_PORT=31053 HEM_AGENT_AUTH=open HEM_AGENT_HOST=0.0.0.0 HEM_AGENT_HOME="$REF_HOME2" \
+  timeout 20 "$LINUX_DIR/hem-manager" > "$REF_LOG3" 2>&1 || REF_RC3=$?
+r=0; { [ "$REF_RC3" -ne 0 ] && [ "$REF_RC3" -ne 124 ]; } || r=1
+chk "open + HEM_AGENT_HOST=0.0.0.0 → exit≠0 (فقط loopback)" $r
+r=0; grep -q 'loopback' "$REF_LOG3" || r=1
+chk "  … با خطای روشن loopback" $r
 
 cleanup_bin
 trap - EXIT

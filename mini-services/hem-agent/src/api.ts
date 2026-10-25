@@ -50,6 +50,7 @@ import { createConsoleRouter } from "./console";
 import { createInstallRouter } from "./installer";
 import { createUpdateRouter } from "./updatectl";
 import { timingSafeTokenMatch } from "./tokenmatch";
+import type { AgentAuthMode } from "./config";
 import type { ServiceActionName } from "./types";
 
 export interface AppDeps {
@@ -59,7 +60,18 @@ export interface AppDeps {
   audit: AuditLogger;
   redactor: Redactor;
   jobs: JobManager;
+  /** توکن فعال (حالت token) — undefined یعنی بدون توکن */
   token?: string;
+  /**
+   * سیاست احراز هویت (v0.3.2 §2):
+   *   • "token" (یا تنظیم‌نشده با توکن موجود) → /api و WebSocket احراز هویت می‌خواهند؛
+   *   • "open" → استثنای مستندِ توسعهٔ محلی (loopback) — بدون احراز هویت؛
+   *   • بدون توکن و بدون authMode → «قفل»: /api فقط health عمومیِ حداقلی را
+   *     می‌دهد و بقیه 503 AUTH_NOT_CONFIGURED (fail-closed، defense-in-depth).
+   * index.ts در حالت قفل اصلاً بالا نمی‌آید؛ این رفتار برای فراخوانی مستقیم
+   * createApp (تست‌ها) و اطمینان لایه‌ای است.
+   */
+  authMode?: AgentAuthMode;
   /** پوشهٔ UI استاتیک — فقط وقتی سرو می‌شود که واقعاً موجود باشد */
   uiDir?: string;
   /** مسیری که ui/ در آن «جست‌وجو شده» — برای پیام خطای روشن وقتی UI نیست */
@@ -110,17 +122,37 @@ export function createApp(deps: AppDeps): Express {
     next();
   });
 
-  // --- توکن اختیاری X-HEM-Token برای همهٔ /api -----------------------------
-  // حالت دسکتاپ: هدر X-HEM-Token «یا» کوکی hem_token (بازکردن /?token=… کوکی
-  // را می‌گذارد — پایین‌تر؛ به این ترتیب UI بدون هیچ تغییری، همان‌مبدأ و با کوکی
-  // خودکار، از توکن عبور می‌کند).
+  // --- احراز هویت /api (v0.3.2 §2 — fail-closed) ---------------------------
+  // ترتیب تصمیم:
+  //   ۱) حالت open (استثنای مستندِ توسعهٔ محلی — loopback) → عبور؛
+  //   ۲) توکن فعال و معتبر (هدر X-HEM-Token یا کوکی hem_token) → عبور؛
+  //   ۳) استثنای عمومیِ صریح و محدود: فقط «GET /api/health» با اطلاعات غیرحساس
+  //      (پاسخ حداقلی ok/service/version — بقیهٔ فیلدها فقط برای درخواست معتبر)؛
+  //   ۴) توکن فعال ولی درخواست بی‌توکن/نادرست → 401؛
+  //   ۵) هیچ توکنی نیست و open هم نیست → 503 AUTH_NOT_CONFIGURED (قفل).
+  // توکن هرگز از query پذیرفته نمی‌شود (تبادل یک‌بارمصرف فقط برای مسیرهای UI است).
+  const authMode: AgentAuthMode | "locked" = deps.authMode ?? (deps.token ? "token" : "locked");
   app.use("/api", (req, res, next) => {
-    if (!deps.token) {
+    if (authMode === "open") {
       next();
       return;
     }
-    if (requestTokenMatches(req, deps.token)) {
+    if (deps.token && requestTokenMatches(req, deps.token)) {
       next();
+      return;
+    }
+    if (isPublicHealthRequest(req)) {
+      next();
+      return;
+    }
+    if (!deps.token) {
+      res.status(503).json({
+        ok: false,
+        error: "AUTH_NOT_CONFIGURED",
+        message:
+          "احراز هویت این سرویس پیکربندی نشده است. HEM_AGENT_TOKEN را تنظیم کنید؛ " +
+          "برای توسعهٔ محلیِ بدون توکن، HEM_AGENT_AUTH=open (فقط loopback) را صریح تنظیم کنید.",
+      });
       return;
     }
     res.status(401).json({ ok: false, error: "UNAUTHORIZED", message: "هدر X-HEM-Token موجود یا معتبر نیست." });
@@ -168,15 +200,28 @@ export function createApp(deps: AppDeps): Express {
 
 
   // ------------------------------------------------------------------ health
-  app.get("/api/health", (_req, res) => {
-    res.json({
-      ok: true,
-      service: "hem-agent",
-      version: deps.version,
-      uptimeSec: Math.round((Date.now() - deps.startedAt) / 1000),
-      platform: process.platform,
-      sessions: deps.manager.list().length,
-    });
+  // مسیر عمومیِ صریح و محدود (v0.3.2 §2): پاسخ «حداقلیِ غیرحساس» برای همه؛
+  // فیلدهای تکمیلی (uptime/platform/sessions) فقط برای درخواست‌های احراز‌هویت‌شده
+  // (توکن معتبر یا حالت open). هیچ اطلاعات مدیریتی در آن نیست.
+  app.get("/api/health", (req, res) => {
+    const authed =
+      authMode === "open" || (!!deps.token && requestTokenMatches(req, deps.token));
+    res.json(
+      authed
+        ? {
+            ok: true,
+            service: "hem-agent",
+            version: deps.version,
+            uptimeSec: Math.round((Date.now() - deps.startedAt) / 1000),
+            platform: process.platform,
+            sessions: deps.manager.list().length,
+          }
+        : {
+            ok: true,
+            service: "hem-agent",
+            version: deps.version,
+          },
+    );
   });
 
   // ------------------------------------------------------------------ profiles
@@ -791,8 +836,11 @@ export function createApp(deps: AppDeps): Express {
   // کاربر در مرورگر صفحهٔ فارسی با علت + مسیر مورد انتظار + راه‌حل می‌بیند و
   // همین رخداد در لاگ سرور هم ثبت می‌شود. /api/health همچنان JSON است (بالاتر).
   app.use((req, res) => {
+    // v0.3.2 §2 (سناریو۷): URL ثبت‌شده در لاگ «همیشه» از redactor می‌گذرد تا
+    // مقدار ?token= (لینک بوت‌استرپ بازیابی‌شده از تاریخچهٔ مرورگر) هرگز در
+    // لاگ سرور افشا نشود — تست security-auth همین رفتار را قفل می‌کند.
     console.error(
-      `[hem-agent] UI not available: ${req.method} ${req.originalUrl} → 503 error page (expected ui/ at: ${deps.uiDirExpected ?? deps.uiDir ?? "?"})`,
+      `[hem-agent] UI not available: ${req.method} ${deps.redactor.redactText(req.originalUrl)} → 503 error page (expected ui/ at: ${deps.uiDirExpected ?? deps.uiDir ?? "?"})`,
     );
     res.status(503);
     res.setHeader("Cache-Control", "no-store");
@@ -877,6 +925,15 @@ function uiMissingErrorPage(expectedUiDir?: string): string {
 </div>
 </body>
 </html>`;
+}
+
+/**
+ * استثنای عمومیِ صریح و محدود (v0.3.2 §2): فقط «GET /api/health» بدون احراز هویت
+ * پاسخِ حداقلی غیرحساس می‌گیرد. دقیقاً همین مسیر و همین متد — نه چیز دیگری.
+ * (تست security-auth این «محدود بودن» را قفل می‌کند.)
+ */
+function isPublicHealthRequest(req: Request): boolean {
+  return req.method === "GET" && req.path === "/health";
 }
 
 /** توکن درخواست: هدر X-HEM-Token یا کوکی hem_token — با توکن مورد انتظار یکی است؟ (timing-safe) */

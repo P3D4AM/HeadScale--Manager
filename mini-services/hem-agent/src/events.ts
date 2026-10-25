@@ -11,6 +11,7 @@
 import type { Server as IOServer, Socket } from "socket.io";
 import type { SessionManager } from "./sessions";
 import type { JobInfo, JobLogLine, JobLogPage } from "./types";
+import type { AgentAuthMode } from "./config";
 import { timingSafeTokenMatch } from "./tokenmatch";
 
 /** آنچه SessionManager از لاگر لازم دارد (پیاده‌سازی واقعی: src/audit.ts) */
@@ -218,11 +219,24 @@ export class JobManager {
   }
 }
 
-/** سیم‌کشی کامل رویدادها: اتاق‌ها + conn:status + job:cancel
- *  v0.3.1 §4: احراز هویت WebSocket — اگر توکنی برای agent تنظیم شده باشد،
- *  اتصالِ بدون هدر X-HEM-Token / کوکی hem_token معتبر، بلافاصله قطع می‌شود؛
- *  هیچ رویداد حساسی (رویدادهای job و conn) به کلاینتی بدون توکن می‌رسد. */
-export function attachEvents(io: IOServer, manager: SessionManager, jobs: JobManager, token?: string): void {
+/**
+ * سیم‌کشی کامل رویدادها: اتاق‌ها + conn:status + job:cancel
+ *  v0.3.1 §4 + v0.3.2 §2: احراز هویت WebSocket «هم‌ارزِ» HTTP —
+ *   • حالت token: اتصال بدون هدر X-HEM-Token / کوکی hem_token معتبر، بلافاصله
+ *     قطع می‌شود؛ هیچ رویداد حساسی (رویدادهای job و conn) به کلاینتی بدون توکن می‌رسد.
+ *   • حالت open (استثنای مستندِ توسعهٔ محلی — loopback): اتصال‌ها باز هستند؛
+ *     index.ts این حالت را فقط روی 127.0.0.۱ می‌پذیرد.
+ *   • بدون توکن و بدون open: «قفل» — هر اتصالی بلافاصله قطع می‌شود
+ *     (fail-closed؛ هم‌ارزِ 503 AUTH_NOT_CONFIGURED در HTTP).
+ * مقایسه توکن HTTP و WS یکسان است (timing-safe، همان هدر/کوکی) — سازگاری الزامی.
+ */
+export function attachEvents(
+  io: IOServer,
+  manager: SessionManager,
+  jobs: JobManager,
+  token?: string,
+  authMode?: AgentAuthMode,
+): void {
   jobs.attach(io);
 
   manager.onStatus = (sessionId, status, detail) => {
@@ -230,10 +244,15 @@ export function attachEvents(io: IOServer, manager: SessionManager, jobs: JobMan
   };
 
   io.on("connection", (socket: Socket) => {
-    if (token && !handshakeTokenMatches(socket, token)) {
-      // درخواست بدون توکن معتبر → بدون هیچ رویداد/داده‌ای قطع می‌شود
+    if (authMode === "open") {
+      // استثنای مستندِ توسعهٔ محلی — index.ts آن را فقط روی loopback می‌پذیرد
+    } else if (token && handshakeTokenMatches(socket, token)) {
+      // توکن معتبر — اتصال مجاز است
+    } else {
+      // بی‌توکن/توکن نادرست (حالت token) یا «قفل» (بدون توکن و بدون open):
+      // بدون هیچ رویداد/داده‌ای قطع می‌شود. مقدار توکن هرگز چاپ نمی‌شود.
       console.log(
-        `[hem-agent] ws rejected (no/invalid token) from ${socket.handshake.address ?? "unknown"}`,
+        `[hem-agent] ws rejected (${token ? "no/invalid token" : "auth not configured"}) from ${socket.handshake.address ?? "unknown"}`,
       );
       socket.disconnect(true);
       return;

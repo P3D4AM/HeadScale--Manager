@@ -15,7 +15,7 @@ const srvPort = (): number => ts.port;
 beforeAll(async () => {
   ensureHeadscaleHealthy();
   ts = await startTestServer({ port: 0 });
-  stack = buildTestStack();
+  stack = buildTestStack({ authMode: "open" }); // v0.3.2 §2: تست منطق کسب‌وکار در استثنای مستندِ توسعه (بدون احراز هویت)
   srv = await listenApp(stack.app);
   sid = await connectAndConfirm(srv.baseUrl, {
     host: TEST_HOST,

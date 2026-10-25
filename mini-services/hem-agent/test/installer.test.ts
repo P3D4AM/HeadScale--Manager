@@ -53,8 +53,8 @@ beforeAll(async () => {
   ensureHeadscaleHealthy();
   // noShim: سرور هدف «تمیز» است (headscale روی PATH نیست) — جریان نصب تازهٔ ۱۷ گامی
   ts = await startTestServer({ port: 0, noShim: true });
-  stack = buildTestStack();
-  srv = await listenStackIo(stack);
+  stack = buildTestStack({ authMode: "open" }); // v0.3.2 §2: تست منطق کسب‌وکار در استثنای مستندِ توسعه (بدون احراز هویت)
+  srv = await listenStackIo(stack, { authMode: "open" }); // v0.3.2 §2: استثنای مستندِ توسعه
   sid = await connectAndConfirm(srv.baseUrl, {
     host: TEST_HOST,
     port: ts.port,

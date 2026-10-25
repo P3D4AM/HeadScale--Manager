@@ -21,20 +21,37 @@ beforeAll(async () => {
 // ---------------------------------------------------------------------------
 // HTTP — احراز هویت API فقط با هدر X-HEM-Token یا کوکی hem_token
 // ---------------------------------------------------------------------------
-test("HTTP: بدون توکن → 401 (منفی)", async () => {
+test("HTTP: بدون توکن → health عمومیِ حداقلی است (200 با فقط فیلدهای غیرحساس) و مسیرهای حساس 401 (منفی)", async () => {
+  // v0.3.2 §2: health = استثنای عمومیِ صریح و محدود — پاسخ حداقلی برای همه؛
+  // اما هیچ مسیر مدیریتی بدون توکن در دسترس نیست:
   const r = await fetch(`${srv.baseUrl}/api/health`);
-  expect(r.status).toBe(401);
-  const body = (await r.json()) as { error: string };
-  expect(body.error).toBe("UNAUTHORIZED");
+  expect(r.status).toBe(200);
+  const body = (await r.json()) as Record<string, unknown>;
+  expect(body.ok).toBe(true);
+  expect(body.service).toBe("hem-agent");
+  expect(Object.keys(body).sort()).toEqual(["ok", "service", "version"].sort()); // بدون uptime/platform/sessions
+  const r2 = await fetch(`${srv.baseUrl}/api/profiles`);
+  expect(r2.status).toBe(401);
+  const body2 = (await r2.json()) as { error: string };
+  expect(body2.error).toBe("UNAUTHORIZED");
+});
+
+test("HTTP: health با توکن معتبر → پاسخ کامل (uptime/platform/sessions فقط برای احراز‌هویت‌شده)", async () => {
+  const r = await fetch(`${srv.baseUrl}/api/health`, { headers: { "X-HEM-Token": TOKEN } });
+  expect(r.status).toBe(200);
+  const body = (await r.json()) as Record<string, unknown>;
+  expect(body.uptimeSec).toBeDefined();
+  expect(body.platform).toBeDefined();
+  expect(body.sessions).toBeDefined();
 });
 
 test("HTTP: توکن نادرست در هدر → 401 (منفی)", async () => {
-  const r = await fetch(`${srv.baseUrl}/api/health`, { headers: { "X-HEM-Token": "wrong-token-value-000000" } });
+  const r = await fetch(`${srv.baseUrl}/api/profiles`, { headers: { "X-HEM-Token": "wrong-token-value-000000" } });
   expect(r.status).toBe(401);
 });
 
 test("HTTP: token در query هیچ‌وقت احراز هویت API نیست → 401 و بدون Set-Cookie (منفی)", async () => {
-  const r = await fetch(`${srv.baseUrl}/api/health?token=${encodeURIComponent(TOKEN)}`);
+  const r = await fetch(`${srv.baseUrl}/api/profiles?token=${encodeURIComponent(TOKEN)}`);
   expect(r.status).toBe(401);
   expect(r.headers.get("set-cookie")).toBeNull(); // هیچ کوکی‌ای ساخته نمی‌شود
 });
@@ -52,7 +69,7 @@ test("HTTP: کوکی hem_token معتبر (بدون هدر) → 200 (مثبت)",
 });
 
 test("HTTP: کوکی hem_token نادرست → 401 (منفی)", async () => {
-  const r = await fetch(`${srv.baseUrl}/api/health`, { headers: { Cookie: "hem_token=wrong-token-value-000000" } });
+  const r = await fetch(`${srv.baseUrl}/api/profiles`, { headers: { Cookie: "hem_token=wrong-token-value-000000" } });
   expect(r.status).toBe(401);
 });
 
@@ -125,7 +142,7 @@ test("Bootstrap: token نادرست هیچ‌وقت کوکی نمی‌سازد (
 });
 
 test("Bootstrap: مسیرهای /api هرگز تبادل نمی‌کنند — token در query فقط روی UI معتبر است (منفی)", async () => {
-  const r = await fetch(`${srv.baseUrl}/api/health?token=${encodeURIComponent(TOKEN)}`, { redirect: "manual" });
+  const r = await fetch(`${srv.baseUrl}/api/profiles?token=${encodeURIComponent(TOKEN)}`, { redirect: "manual" });
   expect(r.status).toBe(401); // نه 303، نه کوکی — مثل قبل
   expect(r.headers.get("set-cookie")).toBeNull();
 });

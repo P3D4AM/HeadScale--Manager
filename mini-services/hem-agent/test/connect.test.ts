@@ -13,7 +13,7 @@ let srv: ListeningServer;
 
 beforeAll(async () => {
   ts = await startTestServer({ port: 0 });
-  stack = buildTestStack();
+  stack = buildTestStack({ authMode: "open" }); // v0.3.2 §2: تست منطق کسب‌وکار در استثنای مستندِ توسعه (بدون احراز هویت)
   srv = await listenApp(stack.app);
 }, 20_000);
 

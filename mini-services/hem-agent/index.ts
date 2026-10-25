@@ -2,22 +2,37 @@
 // express + socket.io روی 127.0.0.1:3005 (HEM_AGENT_HOST/HEM_AGENT_PORT)
 // درخواست‌های دروازه با ?XTransformPort=3005 می‌رسند و express خودش آن را نادیده می‌گیرد.
 //
-// حالت دسکتاپ (HEM_DESKTOP=1 یا --desktop — برنامهٔ ویندوزی):
-//   • اگر HEM_AGENT_TOKEN تنظیم نشده باشد، یک توکن تصادفی برای «همین اجرا» ساخته می‌شود.
-//   • نشانی UI با ?token= چاپ و مرورگر باز می‌شود؛ تبادل token→کوکی «یک‌بارمصرف»
-//     است (v0.3.1 §4): پس از اولین استفاده، لینک قدیمی در تاریخچهٔ مرورگر دیگر
-//     معتبر نیست؛ کوکی جلسه‌ای HttpOnly/SameSite=Strict روی سیستم کاربر می‌نشیند
-//     و 303 نشانی را بدون token تمیز می‌کند. احراز هویت API فقط با هدر
-//     X-HEM-Token یا همان کوکی است — token در query هیچ‌وقت معتبر نیست.
-//   • WebSocket هم مانند HTTP توکن‌سنجی می‌شود (events.ts) — اتصال بدون توکن
-//     معتبر بلافاصله قطع می‌شود و هیچ رویداد حساسی دریافت نمی‌کند.
+// احراز هویت (v0.3.2 §2 — fail-closed):
+//   • حالت token (پیش‌فرض اجرای واقعی): همهٔ /api (به‌جز health عمومیِ حداقلی)
+//     و همهٔ WebSocketها به هدر X-HEM-Token یا کوکی hem_token نیاز دارند.
+//   • حالت دسکتاپ (HEM_DESKTOP=1 یا --desktop): اگر HEM_AGENT_TOKEN تنظیم نشده
+//     باشد، یک توکن تصادفی امن برای «همین اجرا» ساخته می‌شود؛ نشانی UI با
+//     ?token= چاپ و مرورگر باز می‌شود؛ تبادل token→کوکی «یک‌بارمصرف» است
+//     (v0.3.1 §4): پس از اولین استفاده، لینک قدیمی در تاریخچهٔ مرورگر دیگر
+//     معتبر نیست؛ کوکی جلسه‌ای HttpOnly/SameSite=Strict روی سیستم کاربر
+//     می‌نشیند و 303 نشانی را بدون token تمیز می‌کند. احراز هویت API فقط با
+//     هدر X-HEM-Token یا همان کوکی است — token در query هیچ‌وقت معتبر نیست.
+//   • حالت open (HEM_AGENT_AUTH=open — استثنای مستندِ توسعهٔ محلی):
+//     بدون احراز هویت، فقط روی loopback؛ روی آدرس شبکه‌ای شروع نمی‌شود.
+//   • بدون توکن و بدون open: سرویس با خطای روشن «شروع نمی‌شود» (exit غیرصفر).
+//   • WebSocket هم مانند HTTP توکن‌سنجی می‌شود (events.ts) — هم‌ارز و سازگار.
 
 import { spawn } from "node:child_process";
 import { randomBytes } from "node:crypto";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { Server as IOServer } from "socket.io";
-import { agentHome, agentHost, agentPort, agentToken, desktopMode, AGENT_VERSION, installerRootStatus } from "./src/config";
+import {
+  agentHome,
+  agentHost,
+  agentPort,
+  desktopMode,
+  isLoopbackHost,
+  resolveAuthPlan,
+  type AuthPlan,
+  AGENT_VERSION,
+  installerRootStatus,
+} from "./src/config";
 import { programDir } from "./src/exepath";
 import { createApp } from "./src/api";
 import { attachEvents, JobManager } from "./src/events";
@@ -47,13 +62,44 @@ const exeDir = programDir(import.meta.dir);
 const uiDir = path.join(exeDir, "ui");
 const uiExists = fs.existsSync(uiDir);
 
-// --- توکن: صریح از محیط، یا (فقط در حالت دسکتاپ) تصادفی برای این اجرا
+// --- سیاست احراز هویت (v0.3.2 §2 — fail-closed) --------------------------
+// قدیم: «نبودن توکن» یعنی سرویسِ بی‌دفاع روی همهٔ /api و WebSocket — اصلاح شد:
+//   • توکن صریح یا (دسکتاپ) تولیدی → حالت token؛
+//   • HEM_AGENT_AUTH=open صریح → استثنای مستندِ توسعهٔ محلی، فقط روی loopback؛
+//   • هیچ‌کدام → «شروع نمی‌شود» با خطای فارسی روشن و exit غیرصفر.
+// تولید توکن دسکتاپ همین‌جا انجام می‌شود (randomBytes(24) — امن و تصادفی).
 const isDesktop = desktopMode();
-let token = agentToken();
-let tokenGenerated = false;
-if (isDesktop && !token) {
-  token = randomBytes(24).toString("hex");
-  tokenGenerated = true;
+const host = agentHost();
+const auth = resolveAuthPlan({
+  auth: process.env.HEM_AGENT_AUTH,
+  token: process.env.HEM_AGENT_TOKEN,
+  desktop: isDesktop,
+});
+if (!auth.ok) {
+  console.error("[hem-agent] راه‌اندازی متوقف شد — پیکربندی احراز هویت معتبر نیست:");
+  console.error(`[hem-agent] ${auth.code}`);
+  console.error(auth.message);
+  process.exit(1);
+}
+let plan: AuthPlan = auth.plan;
+if (plan.tokenGenerated) {
+  plan = { ...plan, token: randomBytes(24).toString("hex") };
+}
+const token: string | undefined = plan.token;
+
+// حالت open فقط روی loopback — در غیر این صورت شروع نمی‌شود (خطای روشن):
+// HEM_AGENT_HOST نباید بتواند سرویسِ بی‌احراز هویتی روی شبکه بگذارد.
+if (plan.mode === "open" && !isLoopbackHost(host)) {
+  console.error("[hem-agent] راه‌اندازی متوقف شد — حالت open (بدون احراز هویت) فقط روی loopback مجاز است:");
+  console.error(`[hem-agent] HEM_AGENT_HOST="${host}" یک آدرس شبکه‌ای است؛ سرویس بی‌احراز هویت روی شبکه شروع نمی‌شود.`);
+  console.error("[hem-agent] برای دسترسی شبکه‌ای، HEM_AGENT_TOKEN را تنظیم کنید (و HEM_AGENT_AUTH را حذف کنید).");
+  process.exit(1);
+}
+// حالت token روی آدرس شبکه‌ای = انتخاب آگاهانه — هشدار صریح، شروع ادامه می‌یابد:
+if (plan.mode === "token" && !isLoopbackHost(host)) {
+  console.warn(
+    `[hem-agent] ⚠ سرویس روی آدرس شبکه‌ای "${host}" بایند می‌شود — مطمئن شوید توکن قوی/تصادفی است و ترافیک از طریق پروکسی معتمد/HTTPS می‌گذرد.`,
+  );
 }
 
 const app = createApp({
@@ -64,6 +110,7 @@ const app = createApp({
   redactor,
   jobs,
   token,
+  authMode: plan.mode,
   // uiDir فقط وقتی واقعاً موجود است سرو می‌شود؛ مسیر «مورد انتظار» همیشه
   // پاس داده می‌شود تا صفحهٔ خطا/لاگ دقیق بگوید کجا گشسته‌ایم (نه JSON مبهم).
   uiDir: uiExists ? uiDir : undefined,
@@ -72,7 +119,6 @@ const app = createApp({
   startedAt: Date.now(),
 });
 
-const host = agentHost();
 const port = agentPort();
 const uiUrl = `http://127.0.0.1:${port}/${token ? `?token=${token}` : ""}`;
 
@@ -102,14 +148,21 @@ if (rootStatus.ok) {
 const server = app.listen(port, host, () => {
   console.log(`[hem-agent] listening on http://${host}:${port} (home: ${home})`);
   console.log(
-    `[hem-agent] version ${AGENT_VERSION} | platform ${process.platform} | ui: ${uiExists ? `served (${uiDir})` : `MISSING (expected ${uiDir})`}${isDesktop ? " | mode: desktop" : ""}`,
+    `[hem-agent] version ${AGENT_VERSION} | platform ${process.platform} | ui: ${uiExists ? `served (${uiDir})` : `MISSING (expected ${uiDir})`}${plan.desktop ? " | mode: desktop" : ""} | auth: ${plan.mode}${plan.tokenGenerated ? " (generated for this run)" : plan.mode === "token" ? " (explicit HEM_AGENT_TOKEN)" : " (no-auth, loopback dev only)"}`,
   );
-  if (isDesktop) {
-    if (tokenGenerated) {
+  if (plan.mode === "open") {
+    console.warn(
+      "[hem-agent] ⚠ حالت open فعال است: /api و WebSocket «بدون احراز هویت» روی همین loopback در دسترس‌اند. این حالت فقط برای توسعهٔ محلی است؛ در اجرای واقعی HEM_AGENT_TOKEN را تنظیم کنید.",
+    );
+  }
+  if (plan.desktop) {
+    if (plan.tokenGenerated) {
       console.log("[hem-agent] token: generated for this run (set HEM_AGENT_TOKEN to pin it)");
       console.log("[hem-agent] این نشانی یک‌بارمصرف است — پس از اولین بازشدن، لینک قدیمی (تاریخچهٔ مرورگر) دیگر معتبر نیست.");
     }
-    // نشانی همیشه چاپ می‌شود — حتی اگر بازکردن مرورگر شکست بخورد
+    // نشانی همیشه چاپ می‌شود — حتی اگر بازکردن مرورگر شکست بخورد.
+    // (تنها محلِ چاپِ توکن: کنسولِ خودِ کاربر روی سیستم خودش — کانال تحویلِ
+    // بوت‌استرپ دسکتاپ؛ در لاگ حسابرسی/پاسخ‌های API هرگز ظاهر نمی‌شود.)
     console.log(`[hem-agent] desktop UI: ${uiUrl}`);
     openDefaultBrowser(uiUrl);
   }
@@ -144,7 +197,7 @@ const io = new IOServer(server, {
     },
   },
 });
-attachEvents(io, manager, jobs, token);
+attachEvents(io, manager, jobs, token, plan.mode);
 
 function shutdown(signal: string): void {
   console.log(`[hem-agent] ${signal} received — closing sessions…`);

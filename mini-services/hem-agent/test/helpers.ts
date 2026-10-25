@@ -6,6 +6,7 @@ import * as path from "node:path";
 import { execFileSync } from "node:child_process";
 import type { Express } from "express";
 import { createApp } from "../src/api";
+import type { AgentAuthMode } from "../src/config";
 import { AuditLogger } from "../src/audit";
 import { JobManager } from "../src/events";
 import { ProfileStore } from "../src/profiles";
@@ -33,6 +34,8 @@ export interface TestStack {
 export interface BuildStackOpts {
   /** توکن اختیاری X-HEM-Token — برای تست‌های احراز هویت (v0.3.1 §4) */
   token?: string;
+  /** سیاست احراز هویت صریح (v0.3.2 §2): "open" = استثنای توسعهٔ محلی؛ undefined = از token استنتاج می‌شود */
+  authMode?: AgentAuthMode;
   /** پوشهٔ UI واقعی (باید موجود باشد تا سرو شود) — پیش‌فرض: مسیر ناموجود */
   uiDir?: string;
   /** مسیر مورد انتظار UI برای صفحهٔ خطا (v0.3.2) — پیش‌فرض: همان uiDir */
@@ -56,6 +59,7 @@ export function buildTestStack(opts: BuildStackOpts = {}): TestStack {
     redactor,
     jobs,
     token: opts.token,
+    authMode: opts.authMode,
     uiDir,
     uiDirExpected: opts.uiDirExpected ?? uiDir,
     version: AGENT_VERSION,
@@ -96,10 +100,11 @@ export async function listenApp(app: Express): Promise<ListeningServer> {
 }
 
 /** سرور HTTP + socket.io وصل به همان پورت (برای تست‌های رویداد job)
- *  token اختیاری → احراز هویت WS مثل حالت دسکتاپ (v0.3.1 §4) */
+ *  token اختیاری → احراز هویت WS مثل حالت دسکتاپ (v0.3.1 §4)؛
+ *  authMode (v0.3.2 §2): "open" = استثنای توسعهٔ محلی، undefined = استنتاج از token */
 export async function listenStackIo(
   stack: TestStack,
-  opts: { token?: string } = {},
+  opts: { token?: string; authMode?: AgentAuthMode } = {},
 ): Promise<ListeningServer & { closeIo: () => Promise<void> }> {
   const { Server: IOServer } = await import("socket.io");
   const { attachEvents } = await import("../src/events");
@@ -108,7 +113,7 @@ export async function listenStackIo(
       const addr = server.address();
       const port = typeof addr === "object" && addr ? addr.port : 0;
       const io = new IOServer(server, { cors: { origin: "*" } });
-      attachEvents(io, stack.manager, stack.jobs, opts.token);
+      attachEvents(io, stack.manager, stack.jobs, opts.token, opts.authMode);
       resolve({
         baseUrl: `http://127.0.0.1:${port}`,
         close: () =>
