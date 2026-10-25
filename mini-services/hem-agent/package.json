@@ -1,7 +1,7 @@
 {
   "name": "hem-agent",
   "private": true,
-  "version": "0.3.2-beta.1",
+  "version": "0.3.2-beta.2",
   "description": "HEM Agent — real SSH management backend for Headscale Easy Manager (Persian product)",
   "scripts": {
     "dev": "bun --hot index.ts",

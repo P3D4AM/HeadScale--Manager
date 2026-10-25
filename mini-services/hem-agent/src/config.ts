@@ -4,7 +4,7 @@ import * as path from "node:path";
 import { inCompiledBinary } from "./exepath";
 
 /** نسخهٔ agent — هماهنگ با package.json (v0.3.2: رفع باگ UI ویندوزی) */
-export const AGENT_VERSION = "0.3.2-beta.1"; // پیش‌انتشار توسعه (develop) — شاخهٔ پایدار: main
+export const AGENT_VERSION = "0.3.2-beta.2"; // پیش‌انتشار توسعه (develop) — شاخهٔ پایدار: main
 
 /** آدرس bind (پیش‌فرض loopback — دسترسی شبکه‌ای باید آگاهانه و با توکن باشد) */
 export function agentHost(): string {
@@ -82,7 +82,9 @@ export type AuthPlanResult = { ok: true; plan: AuthPlan } | { ok: false; code: s
 /** اعتبارسنجی سیاست — تابع خالص و قابل تست؛ همهٔ ترکیب‌ها صریح و بی‌ابهام */
 export function resolveAuthPlan(input: AuthPlanInput): AuthPlanResult {
   const auth = (input.auth ?? "").trim().toLowerCase();
-  const token = input.token && input.token.length > 0 ? input.token : undefined;
+  // توکنِ فقط‌فاصله‌ای = تنظیم‌نشده (هم‌ارز resolveDesktopMode/agentAuthPolicy) —
+  // وگرنه «توکنِ دوفاصله‌ای» به‌عنوان توکن واقعیِ حالت token پذیرفته می‌شد.
+  const token = input.token && input.token.trim().length > 0 ? input.token : undefined;
 
   // مقدار نامعتبر HEM_AGENT_AUTH — هر چیزی به‌جز token/open رد می‌شود
   if (auth && auth !== "token" && auth !== "open") {
@@ -150,15 +152,71 @@ export function agentAuthPolicy(): string | undefined {
   return v && v.trim().length > 0 ? v : undefined;
 }
 
+// ---------------------------------------------------------------------------
+// حالت دسکتاپ (v0.3.2-beta.2 — رفع «بسته‌شدن سریع EXE»):
+//
+// باگ: در v0.3.2-beta.1 اجرای «خالی» hem-manager.exe روی ویندوز (دابل‌کلیک،
+// بدون هیچ متغیر محیطی) نه توکنی داشت، نه HEM_DESKTOP، نه هیچ صراحتی —
+// سیاست fail-closed درست رفتار می‌کرد (AUTH_NOT_CONFIGURED + exit≠0) اما
+// نتیجهٔ «کاربری» آن بود که پنجرهٔ کنسول بلافاصله بسته می‌شد و کاربر چیزی
+// نمی‌دید. مسیرِ راه‌اندازیِ پیش‌فرضِ «برنامهٔ ویندوزی بسته‌شده» هرگز به حالت
+// دسکتاپ نگاشت نشده بود.
+//
+// مدل جدید — سه راه صریح + یک قاعدهٔ خودکارِ «محصور»:
+//   ۱) HEM_DESKTOP=1 یا --desktop (explicit — مثل قبل)؛
+//   ۲) قاعدهٔ بستهٔ ویندوزی: باینری کامپایل‌شده روی win32 «بدون هیچ توکن و
+//      بدون هیچ HEM_AGENT_AUTH» = دابل‌کلیکِ کاربر → دسکتاپ؛ توکن تصادفیِ
+//      همان اجرا ساخته می‌شود (همان مدل امن v0.3.2 §2 — هرگز open).
+//      صراحتِ کاربر همیشه برنده است: اگر HEM_AGENT_TOKEN یا HEM_AGENT_AUTH
+//      تنظیم شده باشند، قاعدهٔ خودکار خاموش است (حالت سرویس/توسعه دست‌نخورده).
+//   ۳) بقیهٔ حالت‌ها (لینوکس، اجرای توسعه با bun، ...) مثل قبل: قفلِ
+//      fail-closed — «شروع نمی‌شود» با خطای روشن.
+// ---------------------------------------------------------------------------
+
+export interface DesktopModeInput {
+  env?: Record<string, string | undefined>;
+  argv?: string[];
+  /** process.platform */
+  platform?: string;
+  /** آیا از داخل باینری کامپایل‌شده اجرا می‌شویم؟ (member $bunfs) */
+  compiledBinary?: boolean;
+}
+
+/** خالص و قابل تست — «آیا این اجرا، اجرای دسکتاپ است؟» */
+export function resolveDesktopMode(input: DesktopModeInput): boolean {
+  const env = input.env ?? {};
+  const argv = input.argv ?? [];
+  const platform = input.platform ?? process.platform;
+  const compiled = input.compiledBinary ?? false;
+
+  // ۱) صریح — همیشه برنده
+  if (env.HEM_DESKTOP === "1" || argv.includes("--desktop")) return true;
+
+  // ۲) قاعدهٔ بستهٔ ویندوزی — فقط وقتی «هیچ» صراحت احراز هویتی وجود ندارد.
+  //    توکن یا HEM_AGENT_AUTHِ تنظیم‌شده یعنی کاربر/سرویس خودش تصمیم گرفته.
+  //    مقدارهای خالی/فاصله‌ای «تنظیم‌شده» حساب نمی‌شوند (هم‌ارز agentAuthPolicy).
+  const tokenSet = !!(env.HEM_AGENT_TOKEN && env.HEM_AGENT_TOKEN.trim().length > 0);
+  const authSet = !!(env.HEM_AGENT_AUTH && env.HEM_AGENT_AUTH.trim().length > 0);
+  if (platform === "win32" && compiled && !tokenSet && !authSet) {
+    return true;
+  }
+  return false;
+}
+
 /**
- * حالت دسکتاپ/ویندوزی: HEM_DESKTOP=1 یا فلگ --desktop.
+ * حالت دسکتاپ از محیط واقعی این اجرا.
  * رفتار: اگر HEM_AGENT_TOKEN تنظیم نشده باشد، یک توکن تصادفی یک‌بارِ این اجرا
  * ساخته می‌شود، نشانی UI با ?token= چاپ می‌شود و مرورگر پیش‌فرض باز می‌شود
  * (index.ts). API توکن را از هدر X-HEM-Token «یا» کوکی hem_token می‌پذیرد
  * (api.ts) — تا UI بدون هیچ تغییری در حالت دسکتاپ کار کند.
  */
 export function desktopMode(): boolean {
-  return process.env.HEM_DESKTOP === "1" || process.argv.includes("--desktop");
+  return resolveDesktopMode({
+    env: process.env,
+    argv: process.argv,
+    platform: process.platform,
+    compiledBinary: inCompiledBinary(import.meta.dir),
+  });
 }
 
 // ---------------------------------------------------------------------------

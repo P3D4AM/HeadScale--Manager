@@ -66,10 +66,85 @@ fail() { printf '\033[1;31m[build-windows] خطا:\033[0m %s\n' "$*" >&2; exit 1
 [ -d "$OUTER_DIR/src/app" ]  || fail "پروژهٔ بیرونی (Next.js) در $OUTER_DIR پیدا نشد."
 # --- پیش‌شرط‌های installer/ (v0.3.1 §1) — پیش از هر کاری ---------------------
 command -v git >/dev/null 2>&1 || fail "git روی PATH نیست — ساخت installer/ به git archive نیاز دارد."
+command -v python3 >/dev/null 2>&1 || fail "python3 روی PATH نیست — نگهبان بایت‌های فایل‌های متنی ویندوزی (BOM/CRLF) به آن نیاز دارد."
 [ -d "$OUTER_DIR/.git" ] || fail "$OUTER_DIR مخزن گیت نیست — installer/ فقط از درخت کامیت‌شدهٔ همان گیت ساخته می‌شود (هیچ مسیر توسعه‌دهنده‌ای فرض نمی‌شود)."
 [ ! -e "$OUTER_DIR/headscale-easy-manager/.git" ] || fail "مخزن تو در تو — fold v0.3.1 انجام نشده (headscale-easy-manager/.git موجود است)."
 [ -f "$OUTER_DIR/headscale-easy-manager/install.sh" ] || fail "install.sh در درخت کاری headscale-easy-manager نیست — درخت کامیت‌شده (HEAD) باید مخزن پایتون را داشته باشد (fold v0.3.1)."
+[ -f "$SCRIPT_DIR/templates/install.ps1" ]        || fail "قالب templates/install.ps1 موجود نیست."
+[ -f "$SCRIPT_DIR/templates/uninstall.ps1" ]      || fail "قالب templates/uninstall.ps1 موجود نیست."
+[ -f "$SCRIPT_DIR/templates/README-WINDOWS-FA.txt" ] || fail "قالب templates/README-WINDOWS-FA.txt موجود نیست."
 log "نسخه: $VERSION | agent: $AGENT_DIR | پروژهٔ بیرونی: $OUTER_DIR"
+
+# ----------------------------------------------------------------------------
+# نگهبان فایل‌های متنی ویندوزی (v0.3.2-beta.2 — ریشه‌یابی باگ Parser نصب‌کننده)
+# ----------------------------------------------------------------------------
+# باگ: تا v0.3.2-beta.1 این فایل‌ها با heredocِ بش نوشته می‌شدند: «UTF-8 بدون
+# BOM» + «LF تنها». Windows PowerShell 5.1 فایلِ بدون BOM را با کدپیج ANSI
+# می‌خواند (CP1256/CP1252) → متن فارسی خراب می‌شود و بدتر: بعضی بایت‌های
+# UTF-8 فارسی در کدپیج ANSI به «نویسه‌های نقل‌قولی یونی‌کد» ترجمه می‌شوند
+# (ق → ‚ ؛ — → ”) که Parser خودشان را جداکنندهٔ رشته می‌شناسد →
+# «Unexpected token ')'» و «string missing terminator» در install.ps1.
+# قرارداد قطعی: BOMِ UTF-8 + فقط CRLF + بدون «کوتیشن‌های هوشمند» U+2018..U+201D.
+# این نگهبان «منبع واحد» است — هر فایل خروجیِ ویندوزی باید از آن بگذرد؛
+# اگر کسی روزی قالب را با ادیتوری اشتباه ذخیره کرد، ساخت همین‌جا و با صدای
+# بلند متوقف می‌شود (اصلاحِ سیستماتیک، نه اصلاحِ یک‌باره).
+# ----------------------------------------------------------------------------
+guard_windows_text() {
+  python3 - "$@" <<'PYGUARD'
+import sys
+BOM = b"\xef\xbb\xbf"
+QUOTES = set(range(0x2018, 0x201F))  # ‘ ’ ‚ ‛ “ ” „ — هرگز نباید باشند (همه با Parser واقعی PowerShell آزموده شدند؛ U+201F و « » بی‌خطرند)
+ok = True
+for p in sys.argv[1:]:
+    try:
+        data = open(p, "rb").read()
+    except OSError as e:
+        print(f"GUARD FAIL {p}: خواندن ممکن نیست — {e}")
+        ok = False
+        continue
+    why = []
+    if not data.startswith(BOM):
+        why.append("BOMِ UTF-8 ندارد (PowerShell 5.1 آن را با کدپیج ANSI می‌خواند)")
+    body = data[3:] if data.startswith(BOM) else data
+    stripped = body.replace(b"\r\n", b"")
+    if b"\n" in stripped:
+        why.append("LFِ بدون CR دارد (فقط CRLF مجاز است)")
+    if b"\r" in stripped:
+        why.append("CRِ تنها دارد (فقط CRLF مجاز است)")
+    if not body.strip():
+        why.append("خالی است")
+    try:
+        text = body.decode("utf-8")
+    except UnicodeDecodeError:
+        why.append("UTF-8 معتبر نیست")
+        text = ""
+    if any(ord(c) in QUOTES for c in text):
+        why.append("حاوی نویسهٔ نقل‌قولیِ یونی‌کد (U+2018..U+201E) است — Parser PowerShell جداکنندهٔ رشته می‌شناسدشان")
+    if why:
+        print(f"GUARD FAIL {p}: " + "؛ ".join(why))
+        ok = False
+if not ok:
+    sys.exit(1)
+print("GUARD OK — BOM + CRLF + بدون کوتیشن هوشمند")
+PYGUARD
+}
+
+# بررسی نحوی با Parser خود PowerShell — اگر pwsh در دسترس بود (اختیاری/صادقانه)
+parse_ps1_guard() {
+  if command -v pwsh >/dev/null 2>&1; then
+    log "بررسی نحوی install.ps1/uninstall.ps1 با Parser خود PowerShell …"
+    for f in "$@"; do
+      PS1FILE="$f" pwsh -NoProfile -Command '
+        $errs = $null; $tok = $null
+        $null = [System.Management.Automation.Language.Parser]::ParseFile($env:PS1FILE, [ref]$tok, [ref]$errs)
+        if ($errs.Count -gt 0) { $errs | ForEach-Object { Write-Output $_.Message }; exit 1 }
+        Write-Output "PARSE OK: $env:PS1FILE"
+      ' || fail "Parser PowerShell برای $f خطا داد (بالا)."
+    done
+  else
+    log "صادقانه: pwsh در دسترس نیست — بررسی Parser در «همین ساخت» انجام نشد؛ در CI ویندوزی با Windows PowerShell 5.1 واقعی انجام می‌شود."
+  fi
+}
 
 # ----------------------------------------------------------------------------
 # ۰) در صورت فرود مسیر 7-a: تولید مستندات build-time (امروز اختیاری/بی‌اثر)
@@ -138,152 +213,29 @@ bun build --compile --target=bun-windows-x64 "$AGENT_DIR/index.ts" \
   --outfile "$STAGE/hem-manager.exe" >/dev/null || fail "کامپایل exe ویندوزی شکست خورد."
 [ -f "$STAGE/hem-manager.exe" ] || fail "hem-manager.exe ساخته نشد."
 
-# EOF «بدون نقل» عمدی است تا $VERSION تعبیه شود — متن فارسی زیر هیچ $،
-# بک‌تیک یا بک‌اسلش دیگری ندارد (بررسی‌شده). heredocهای PowerShell عمداً
-# نقل‌شده می‌مانند (متغیرهای $env: باید دست‌نخورده به فایل برسند).
-cat > "$STAGE/README-WINDOWS-FA.txt" <<EOF
-================================================================
-  مدیر آسان هداسکیل — Headscale Easy Manager
-  نسخهٔ $VERSION — راهنمای سریع ویندوز (فارسی)
-================================================================
-
-این بسته چه چیزی است؟
-  یک برنامهٔ ویندوزی کوچک که روی «کامپیوتر شما» اجرا می‌شود و از طریق
-  SSH واقعی، سرور هداسکیلِ شما (اوبونتو) را مدیریت می‌کند. رابط کاربری
-  فارسی، همین‌جا در مرورگر خودتان (127.0.0.1:3005) باز می‌شود.
-  هیچ پورتی به اینترنت باز نمی‌شود و نیازی به Administrator نیست.
-
-محتویات:
-  hem-manager.exe   برنامهٔ اصلی (اجرا مستقیم، بدون نصب)
-  ui\               رابط وب فارسی (داخلی — دست نزنید)
-  installer\        مخزن نصب‌کننده (نصب سرور) — کنار برنامه بسته‌بندی شده؛
-                    هنگام ویزارد نصب به سرور آپلود می‌شود و روی سرور در
-                    /tmp/hem-install-<ts> استخراج و در /opt/headscale-easy-manager
-                    نصب می‌شود (مسیرهای لینوکسیِ سرور هیچ‌وقت به ویندوز شما
-                    اشاره نمی‌کنند).
-  install.ps1       نصب اختیاری در %LOCALAPPDATA% + میانبر دسکتاپ/منوی استارت
-  uninstall.ps1     حذف کامل برنامه از ویندوز
-  README-WINDOWS-FA.txt   همین راهنما
-
-----------------------------------------------------------------
-۱) اجرا (بدون نصب)
-----------------------------------------------------------------
-  فایل hem-manager.exe را دابل‌کلیک کنید (یا از PowerShell اجرا کنید).
-  مرورگر پیش‌فرض با نشانی http://127.0.0.1:3005/?token=... باز می‌شود.
-  اگر مرورگر باز نشد، همان نشانیِ چاپ‌شده در پنجرهٔ برنامه را دستی باز کنید.
-
-  هشدار SmartScreen ویندوز («Windows protected your PC»):
-    چون این برنامه امضای دیجیتال (Code Signing) ندارد، ویندوز پیش‌فرض
-    اجازهٔ اجرا نمی‌دهد. روی «More info» و بعد «Run anyway» بزنید.
-    این پیام طبیعی است؛ فایل‌های .sha256 کنار بستهٔ zip برای مقایسهٔ
-    دستی SHA-256 هستند. آموزش کامل: فصل ۱۵ مستندات (hsctl learn 15).
-
-----------------------------------------------------------------
-۲) اولین اتصال به سرور
-----------------------------------------------------------------
-  در برنامه، بخش «اتصال» → «اتصال سریع» را باز کنید و بدهید:
-    آدرس سرور (IP) ، پورت SSH (پیش‌فرض 22) ، نام کاربری لینوکس،
-    و یکی از دو روش: رمز عبور یا مسیر فایل کلید SSH.
-  بار اول، برنامه «اثر انگشت» سرور را نشان می‌دهد (SHA256/MD5) —
-  با ssh-keygen روی سرور مقایسه کنید و تأیید کنید. معنی این تأیید و
-  هشدار «کلید میزبان تغییر کرده» در فصل ۱۵ توضیح داده شده است.
-
-  فایل کلید SSH در ویندوز معمولاً اینجاست:
-    %USERPROFILE%\.ssh\id_ed25519   (کلید PuTTY با پسوند .ppk مستقیم
-    خوانده نمی‌شود؛ در PuTTYgen با Export OpenSSH key تبدیلش کنید.)
-
-----------------------------------------------------------------
-۳) نصب اختیاری (میانبر در دسکتاپ و منوی استارت)
-----------------------------------------------------------------
-  PowerShell را در همین پوشه باز کنید و بزنید:
-    powershell -ExecutionPolicy Bypass -File .\install.ps1
-  برنامه به %LOCALAPPDATA%\HeadscaleEasyManager کپی می‌شود و دو میانبر
-  ساخته می‌شود. حذف کامل: powershell -ExecutionPolicy Bypass -File .\uninstall.ps1
-
-----------------------------------------------------------------
-۴) موارد بیشتر
-----------------------------------------------------------------
-  • ذخیرهٔ امن رمز: تیک «ذخیرهٔ امن» رمز را در Windows Credential Manager
-    نگه می‌دارد (فقط اگر خودتان بخواهید). بدون تیک، رمز فقط در حافظه است.
-  • بخش «نصب سرور» همان ویزارد ۵ مرحله‌ای است (بررسی → تنظیمات →
-    Dry-Run → اجرا → نتیجهٔ صادقانه). اگر سرور sudo داشته باشد پیش
-    می‌رود؛ وگرنه صادقانه در «نیاز به sudo» متوقف می‌شود.
-  • مرجع کامل: فصل ۱۵ مستندات فارسی، در خود برنامه (بخش آموزش) یا
-    روی سرور: hsctl learn 15
-
-  صادقانه: بستهٔ exe از همان سورس، برای ویندوز کامپایل شده است؛
-  در محیط ساخت، «باینری لینوکسیِ همان سورس» به‌صورت زنده آزموده می‌شود.
-EOF
-
-cat > "$STAGE/install.ps1" <<'EOF'
-# نصب «مدیر آسان هداسکیل» — Headscale Easy Manager
-# بدون نیاز به Administrator؛ کپی به %LOCALAPPDATA% + میانبرها.
-# اجرا:  powershell -ExecutionPolicy Bypass -File .\install.ps1
-$ErrorActionPreference = 'Stop'
-$src = Split-Path -Parent $MyInvocation.MyCommand.Path
-$dest = Join-Path $env:LOCALAPPDATA 'HeadscaleEasyManager'
-$exe  = Join-Path $dest 'hem-manager.exe'
-
-Write-Host "نصب مدیر آسان هداسکیل از: $src"
-New-Item -ItemType Directory -Force -Path $dest | Out-Null
-Copy-Item -Path "$src\*" -Destination $dest -Recurse -Force
-Remove-Item (Join-Path $dest 'install.ps1'), (Join-Path $dest 'uninstall.ps1') -Force -ErrorAction SilentlyContinue
-
-# بستن نمونهٔ در حال اجرا از مقصد (در صورت وجود)
-Get-Process hem-manager -ErrorAction SilentlyContinue |
-  Where-Object { $_.Path -like "$dest*" } | Stop-Process -Force -ErrorAction SilentlyContinue
-
-# میانبرها — WScript.Shell (بدون نیاز به Administrator)
-$ws        = New-Object -ComObject WScript.Shell
-$desktop   = [Environment]::GetFolderPath('Desktop')
-$startMenu = Join-Path $env:APPDATA 'Microsoft\Windows\Start Menu\Programs'
-
-$lnk = $ws.CreateShortcut((Join-Path $desktop 'Headscale Easy Manager.lnk'))
-$lnk.TargetPath = $exe
-$lnk.WorkingDirectory = $dest
-$lnk.Description = 'مدیر آسان هداسکیل — Headscale Easy Manager'
-$lnk.Save()
-
-$lnk2 = $ws.CreateShortcut((Join-Path $startMenu 'Headscale Easy Manager.lnk'))
-$lnk2.TargetPath = $exe
-$lnk2.WorkingDirectory = $dest
-$lnk2.Description = 'مدیر آسان هداسکیل — Headscale Easy Manager'
-$lnk2.Save()
-
-Write-Host ''
-Write-Host 'نصب کامل شد.' -ForegroundColor Green
-Write-Host "  مسیر نصب   : $dest"
-Write-Host '  میانبرها   : دسکتاپ و منوی استارت («Headscale Easy Manager»)'
-Write-Host ''
-Write-Host 'حذف برنامه: powershell -ExecutionPolicy Bypass -File .\uninstall.ps1'
-Write-Host 'یادآوری صادقانه: نخستین اجرا ممکن است SmartScreen ویندوز پیام بدهد —'
-Write-Host '  «More info» و سپس «Run anyway» (برنامه امضای دیجیتال ندارد).'
-EOF
-
-cat > "$STAGE/uninstall.ps1" <<'EOF'
-# حذف «مدیر آسان هداسکیل» — فقط برنامهٔ خودِ ویندوز؛ سرور و داده‌های شما دست‌نخورده می‌مانند.
-# اجرا:  powershell -ExecutionPolicy Bypass -File .\uninstall.ps1
-$ErrorActionPreference = 'SilentlyContinue'
-$dest = Join-Path $env:LOCALAPPDATA 'HeadscaleEasyManager'
-
-# ۱) میانبرها
-$desktop   = [Environment]::GetFolderPath('Desktop')
-$startMenu = Join-Path $env:APPDATA 'Microsoft\Windows\Start Menu\Programs'
-Remove-Item (Join-Path $desktop 'Headscale Easy Manager.lnk') -Force
-Remove-Item (Join-Path $startMenu 'Headscale Easy Manager.lnk') -Force
-
-# ۲) بستن برنامهٔ در حال اجرا
-Get-Process hem-manager | Stop-Process -Force
-
-# ۳) حذف پوشه (اگر فایل هنوز قفل بود، حذف با چند ثانیه تأخیر)
-if (Test-Path $dest) {
-  Remove-Item $dest -Recurse -Force
-  if (Test-Path $dest) {
-    Start-Process cmd -WindowStyle Hidden -ArgumentList "/c timeout /t 3 /nobreak >nul & rd /s /q `"$dest`""
-  }
-}
-Write-Host 'برنامه حذف شد. (حذف برنامهٔ ویندوزی هیچ چیزی روی سرور شما تغییر نمی‌دهد.)' -ForegroundColor Green
-EOF
+# ----------------------------------------------------------------------------
+# ۲-ب) فایل‌های متنی ویندوزی — از «قالب‌های ردیابی‌شده» (v0.3.2-beta.2)
+# ----------------------------------------------------------------------------
+# منبع واحد: packaging/templates/ — در گیت ردیابی می‌شوند و قرارداد بایت‌هایشان
+# (UTF-8 BOM + فقط CRLF + بدون کوتیشن هوشمند) با guard_windows_text قفل شده.
+# ریشه‌یابی باگ v0.3.2-beta.1: heredocِ بش «UTF-8 بدون BOM» + «LF» می‌نوشت؛
+# Windows PowerShell 5.1 آن را با کدپیج ANSI می‌خواند و باگ Parser می‌داد.
+# ----------------------------------------------------------------------------
+log "استیج فایل‌های متنی ویندوز از قالب‌ها (install.ps1 / uninstall.ps1 / README) …"
+cp "$SCRIPT_DIR/templates/install.ps1"   "$STAGE/install.ps1"
+cp "$SCRIPT_DIR/templates/uninstall.ps1" "$STAGE/uninstall.ps1"
+# @VERSION@ → $VERSION — فقط این یک جایگزینی؛ بایت‌های دیگر دست نمی‌خورند.
+# (نسخه‌ها هرگز & یا \ ندارند؛ اگر روزی داشتند، اینجا باید escape شود.)
+sed "s/@VERSION@/$VERSION/g" "$SCRIPT_DIR/templates/README-WINDOWS-FA.txt" > "$STAGE/README-WINDOWS-FA.txt"
+# نگهبان بایت‌ها — هم قالب‌ها هم خروجی‌ها
+guard_windows_text "$SCRIPT_DIR/templates/install.ps1" "$SCRIPT_DIR/templates/uninstall.ps1" \
+  "$STAGE/install.ps1" "$STAGE/uninstall.ps1" "$STAGE/README-WINDOWS-FA.txt" \
+  || fail "نگهبان فایل‌های متنی ویندوزی رد شد — قرارداد: UTF-8 BOM + فقط CRLF + بدون U+2018..U+201D (templates را بازبینی کنید)."
+if grep -q "@VERSION@" "$STAGE/README-WINDOWS-FA.txt"; then
+  fail "README خروجی هنوز @VERSION@ دارد — جایگزینی نسخه انجام نشد."
+fi
+grep -q "نسخهٔ $VERSION" "$STAGE/README-WINDOWS-FA.txt" || fail "README خروجی «نسخهٔ $VERSION» را ندارد."
+parse_ps1_guard "$STAGE/install.ps1" "$STAGE/uninstall.ps1"
 
 # ----------------------------------------------------------------------------
 # ۳) باینری لینوکسی همان سورس + راستی‌آزمایی زندهٔ کامل
@@ -342,6 +294,33 @@ chk() { # chk <شرح> <کد موفقیت 0/1>
 # --- ۰) چیدمان packaged: installer/ کنار باینری (پیش‌شرط resolution v0.3.1 §1)
 r=0; [ -f "$LINUX_DIR/installer/install.sh" ] || r=1
 chk "installer/ کنار باینری لینوکسی (packaged layout)" $r
+
+# --- ۰-ب) اجرای «خالی» باینری (بدون هیچ متغیر HEM_*) — رگرسیون باگ
+#     «بسته‌شدن سریع EXE» (v0.3.2-beta.2): روی لینوکس همین مسیرِ قفلِ
+#     fail-closed زنده آزموده می‌شود: exit≠0 + پیام فارسی AUTH_NOT_CONFIGURED
+#     + «لاگ فایلِ تشخیصی» با رکورد fatal (نبودِش یعنی خطا بی‌شاهد می‌مرد).
+#     روی ویندوزِ بسته، همین اجرا به «قاعدهٔ دسکتاپ» می‌افتد (src/config.ts)
+#     و بالا می‌آید — آن مسیر فقط روی ویندوز واقعی/CI ویندوزی آزموده می‌شود.
+BARE_HOME="$LINUX_DIR/bare-home"
+rm -rf "$BARE_HOME"
+set +e
+BARE_OUT="$(cd "$LINUX_DIR" && env -u HEM_AGENT_PORT -u HEM_AGENT_HOST -u HEM_AGENT_TOKEN -u HEM_AGENT_AUTH -u HEM_DESKTOP -u HEM_AGENT_HOME -u HEM_PROJECT_ROOT \
+  HEM_AGENT_HOME="$BARE_HOME" timeout 20 ./hem-manager 2>&1)"
+BARE_RC=$?
+set -e
+r=0
+[ "$BARE_RC" -gt 0 ] && [ "$BARE_RC" -ne 124 ] || r=1
+echo "$BARE_OUT" | grep -q "AUTH_NOT_CONFIGURED" || r=1
+echo "$BARE_OUT" | grep -q "شروع نمی‌شود" || r=1
+[ -f "$BARE_HOME/logs/hem-agent.log" ] || r=1
+if [ -f "$BARE_HOME/logs/hem-agent.log" ]; then
+  grep -q '"code":"AUTH_NOT_CONFIGURED"' "$BARE_HOME/logs/hem-agent.log" || r=1
+  grep -q '"phase":"fatal"' "$BARE_HOME/logs/hem-agent.log" || r=1
+fi
+if [ "$r" -ne 0 ]; then
+  printf '%s\n' "$BARE_OUT" | sed 's/^/  [bare] /' >&2
+fi
+chk "اجرای خالی باینری: exit≠0 + AUTH_NOT_CONFIGURED + لاگ فایل تشخیصی (رگرسیون EXE)" $r
 
 # --- ۱) /?token= → 303 + Set-Cookie جلسه‌ای + (پس از ریدایرکت) index.html فارسی
 #     قرارداد v0.3.1 §4: تبادل یک‌بارمصرف — کوکی جلسه‌ای (بدون Max-Age) و
@@ -483,6 +462,24 @@ unzip -l "$ZIP" | sed 's/^/  /'
 # zip باید نصب‌کننده را داشته باشد — بستهٔ بدون نصب‌کننده هرگز «ساخته‌شده» نیست.
 unzip -l "$ZIP" | grep -q "installer/install.sh" \
   || fail "zip فایل installer/install.sh را ندارد — بستهٔ بدون نصب‌کننده هرگز ساخته نمی‌شود."
+# zip باید فایل‌های جانبی برنامه را کامل داشته باشد (رگرسیون v0.3.2-beta.2):
+# ui/ و اسکریپت‌های ویندوزی و راهنما — بستهٔ ناقص هرگز «ساخته‌شده» نیست.
+unzip -l "$ZIP" | grep -q "hem-manager/ui/index.html" \
+  || fail "zip فایل ui/index.html را ندارد — بستهٔ بدون UI هرگز ساخته نمی‌شود."
+unzip -l "$ZIP" | grep -q "hem-manager/install.ps1" \
+  || fail "zip فایل install.ps1 را ندارد."
+unzip -l "$ZIP" | grep -q "hem-manager/uninstall.ps1" \
+  || fail "zip فایل uninstall.ps1 را ندارد."
+unzip -l "$ZIP" | grep -q "hem-manager/README-WINDOWS-FA.txt" \
+  || fail "zip فایل README-WINDOWS-FA.txt را ندارد."
+# و بایت‌های فایل‌های متنی داخل zip باید همان قرارداد (BOM+CRLF) را داشته باشند.
+rm -rf "$DIST/zip-guard" && mkdir -p "$DIST/zip-guard"
+unzip -q "$ZIP" "hem-manager/install.ps1" "hem-manager/uninstall.ps1" "hem-manager/README-WINDOWS-FA.txt" -d "$DIST/zip-guard"
+guard_windows_text "$DIST/zip-guard/hem-manager/install.ps1" "$DIST/zip-guard/hem-manager/uninstall.ps1" "$DIST/zip-guard/hem-manager/README-WINDOWS-FA.txt" \
+  || fail "فایل‌های متنی داخل zip قرارداد BOM+CRLF را نقض می‌کنند."
+grep -q "@VERSION@" "$DIST/zip-guard/hem-manager/README-WINDOWS-FA.txt" && fail "README داخل zip هنوز @VERSION@ دارد."
+grep -q "نسخهٔ $VERSION" "$DIST/zip-guard/hem-manager/README-WINDOWS-FA.txt" || fail "README داخل zip «نسخهٔ $VERSION» را ندارد."
+rm -rf "$DIST/zip-guard"
 echo
 
 # پاک‌سازی کش منسوخ (v0.3.1 §1): ui-out دیگر نه ورودی است نه خروجی؛
