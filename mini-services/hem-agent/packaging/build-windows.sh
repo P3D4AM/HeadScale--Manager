@@ -458,19 +458,30 @@ log "ui      : $STAGE/ui ($(du -sh "$STAGE/ui" | cut -f1))"
 log "لینوکس : $LINUX_DIR/hem-manager ($(du -h "$LINUX_DIR/hem-manager" | cut -f1)) — آزموده‌شدهٔ زنده"
 echo
 log "محتویات zip:"
-unzip -l "$ZIP" | sed 's/^/  /'
+# عضویتِ فایل‌ها با «فهرستِ یک‌باره در متغیر» بررسی می‌شود — نه `unzip -l | grep -q`.
+# دلیل: زیر pipefail، grep -q با تطابقِ زودهنگام (مثلاً ui/index.html در ابتدای
+# فهرست) unzip را با SIGPIPE می‌کشد، خروج خط لوله 141 می‌شود و «شکست کاذبِ
+# نبودن فایل» می‌سازد — همان الگوی ثبت‌شده در release.sh (اجرأ ۱۴:۲۷) که
+# در بررسی‌های v0.3.2-beta.2 به‌اشتباه دوباره وارد شده بود.
+ZIP_LISTING="$(unzip -l "$ZIP")"
+printf '%s\n' "$ZIP_LISTING" | sed 's/^/  /'
+LF=$'\n'
+ZIP_NAMES="$LF$(printf '%s\n' "$ZIP_LISTING" | awk 'NR>3 && NF==4 {print $4}')$LF"
+zip_has() { # $1 = نام دقیق مدخل — خروجی 0 یعنی موجود
+  case "$ZIP_NAMES" in *"$LF$1$LF"*) return 0 ;; *) return 1 ;; esac
+}
 # zip باید نصب‌کننده را داشته باشد — بستهٔ بدون نصب‌کننده هرگز «ساخته‌شده» نیست.
-unzip -l "$ZIP" | grep -q "installer/install.sh" \
+zip_has "hem-manager/installer/install.sh" \
   || fail "zip فایل installer/install.sh را ندارد — بستهٔ بدون نصب‌کننده هرگز ساخته نمی‌شود."
 # zip باید فایل‌های جانبی برنامه را کامل داشته باشد (رگرسیون v0.3.2-beta.2):
 # ui/ و اسکریپت‌های ویندوزی و راهنما — بستهٔ ناقص هرگز «ساخته‌شده» نیست.
-unzip -l "$ZIP" | grep -q "hem-manager/ui/index.html" \
+zip_has "hem-manager/ui/index.html" \
   || fail "zip فایل ui/index.html را ندارد — بستهٔ بدون UI هرگز ساخته نمی‌شود."
-unzip -l "$ZIP" | grep -q "hem-manager/install.ps1" \
+zip_has "hem-manager/install.ps1" \
   || fail "zip فایل install.ps1 را ندارد."
-unzip -l "$ZIP" | grep -q "hem-manager/uninstall.ps1" \
+zip_has "hem-manager/uninstall.ps1" \
   || fail "zip فایل uninstall.ps1 را ندارد."
-unzip -l "$ZIP" | grep -q "hem-manager/README-WINDOWS-FA.txt" \
+zip_has "hem-manager/README-WINDOWS-FA.txt" \
   || fail "zip فایل README-WINDOWS-FA.txt را ندارد."
 # و بایت‌های فایل‌های متنی داخل zip باید همان قرارداد (BOM+CRLF) را داشته باشند.
 rm -rf "$DIST/zip-guard" && mkdir -p "$DIST/zip-guard"
