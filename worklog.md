@@ -773,3 +773,21 @@ Stage Summary:
 - توکن جدید مجوز Workflows دارد (push فایل workflow واقعی ✓) و در .env و upload/github-credentials.txt (gitignore) ثبت شد؛ دیگر بلوک push فایل CI وجود ندارد.
 - آزموده‌نشدهٔ صادقانه: تجربهٔ بصری دسکتاپِ کاربر واقعی (بازشدن مرورگر/SmartScreen) فقط با منطق و CI پوشش داده می‌شود؛ نصب روی ویندوزِ خودِ کاربر همچنان چک‌لیست دستی در release notes دارد.
 - remote main دست‌نخورده (7318212)؛ سوپروایزر ۶۰ثانیه‌ای دو بار شاخه عوض کرد — هر دو بار بازیابی + دفاع main=develop فعال.
+
+---
+Task ID: 21
+Agent: Z.ai Code (Main Orchestrator)
+Task: توکن تازهٔ مالک + سه سیاست دائمی («توکن یادت بمونه»، «هر تغییر حتماً commit و push»، «تا ریلیز نهایی فقط develop») — همگام‌سازی سندباکسِ عقب‌مانده با origin/develop و ثبت دائمی اعتبارنامه‌ها
+
+Work Log:
+- توکن تازهٔ fine-grained (۹۳ نویسه) با API گیتهاب اعتبارسنجی شد: مالک P3D4AM، مخزن HeadScale-Manager، دسترسی admin/push ✓. دائمی در سه مکان ثبت شد: ~/.git-credentials (credential store استاندارد گیت، مجوز 600)، .env (GITHUB_USER/GITHUB_REPO/GITHUB_TOKEN — gitignore) و upload/github-credentials.txt (gitignore؛ پوشهٔ upload از ریست‌های سندباکس جان به در برده می‌ماند). توکن کامل هرگز در فایل push-شونده یا محتوای کامیت نوشته نمی‌شود.
+- کشف وضعیت سندباکس /home/z/my-project: کپیِ جلسات تا تسک ۱۸ بود — develop محلی = f2706b9 در برابر origin/develop = 05c7b27 (خروجی push‌شدهٔ تسک ۱۹-۲۰ اینجا نبود)؛ main محلی = 80600f1 (کامیت خودکار پلتفرم با پیام UUID حاوی ci.yml دورهٔ تسک ۱۸ — نسخهٔ بازنویسی‌شدهٔ جدیدتر آن روی remote develop موجود است)؛ تغییر کامیت‌نشدهٔ upload/BACKUP-URLS.md (بخش‌های بتا ۳/۴)؛ URL ریموت با توکن باطلِ داخل‌نشسته.
+- راستی‌آزمایی محتوا: BACKUP-URLS.md کامیت‌نشده بایت‌به‌بایت با نسخهٔ origin/develop یکسان بود → هیچ کاری از دست نرفته بود؛ همهٔ خروجی تسک ۱۹-۲۰ (فیکس هر دو باگ + سیاست انگلیسی + CI سبز روی ویندوز واقعی + Release v0.3.2-beta.4) کامل روی remote develop بود.
+- راستی‌آزمایی فیکس‌ها روی نوک develop (05c7b27): قالب install.ps1 — BOM ✓، فقط CRLF ✓، صفر بایت غیر-ASCII بعد از BOM ✓، تمام‌انگلیسی ✓؛ startuplog.ts (لاگ فایل تشخیصی JSON با فیلدهای ts/level/phase/event/code/stack، عبور از Redactor، چرخش ۲۵۶KB، مسیر پایدار logs/hem-agent.log) ✓؛ حالت دسکتاپ بدون خروج فوری (بدون pause؛ HEM_DESKTOP_NO_BROWSER برای CI/سرور) ✓.
+- جراحی گیت سندباکس (انجام‌شده): remote URL بدون توکن (احراز از credential store)، fetch، دورریز تغییرِ یکسانِ BACKUP-URLS.md، develop با ff-only به 05c7b27 (۶۵ فایل)، main محلی هم‌تراز نوک develop (دفاعِ checkoutهای ۶۰ثانیه‌ای سوپروایزر — remote main هرگز لمس نشد: 7318212)، develop-ci محلی هم‌تراز remote (315ca1f). درخت کاری پاک.
+- این ورک‌لاگ از کلون تمیز (/home/z/HeadScale-Manager) کامیت و push شد تا خطر درهم‌آمیزی سوپروایزر (حوادث ثبت‌شدهٔ تسک ۱۹-۲۰) حذف شود؛ سندباکس بلافاصله بعدش به همین کامیت ff شد و main محلی دوباره هم‌تراز شد.
+- سیاست‌های دائمی مالک از این کامیت به بعد در یادمان همهٔ جلسات: ① توکن همیشه ثبت‌شده می‌ماند (سه مکان بالا؛ پس از ریست سندباکس از upload/github-credentials.txt بازیابی شود) ② هر تغییر حتماً commit و push می‌شود ③ تا آماده‌شدن ریلیز نهایی فقط روی شاخهٔ develop کار می‌شود و remote main دست نمی‌خورد.
+
+Stage Summary:
+- origin/develop = همین کامیت (ورک‌لاگ تسک ۲۱) · remote main دست‌نخورده (7318212) · سندباکس /home/z/my-project با origin همگام، پاک و روی develop.
+- وضعیت دیباگ: هر دو باگ گزارش‌شده (خطای نحوی/mojibake نصب‌کننده → بازنویسی تمام‌انگلیسی ASCII با BOM+CRLF؛ بسته‌شدن سریع EXE → لاگ فایل تشخیصی + قاعدهٔ دسکتاپ) روی develop فیکس و روی ویندوز واقعی CI-سبز هستند (f4716f4 — هر ۳۵ گامِ هر دو شغل)؛ Release v0.3.2-beta.4 با ۴ داراییِ دانلود-شده-و-تطبیق‌شده منتشر است. ماندهٔ صادقانه: نصب روی ویندوزِ خودِ کاربر (چک‌لیست دستی release notes) و تجربهٔ دسکتاپ واقعی (SmartScreen/بازشدن مرورگر).
