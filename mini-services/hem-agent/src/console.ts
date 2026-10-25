@@ -1,8 +1,8 @@
-// کنسول (قرارداد §9) — بدون شل آزاد؛ الزام امنیتی محصول.
-//  - پیش‌نمایش: موتور allowlist (src/allowlist.ts) تصمیم می‌گیرد و رشتهٔ دقیق را می‌سازد
-//  - اجرا: فقط رشتهٔ بازساخته‌شده از argv اعتبارسنجی‌شده (هرگز رشتهٔ خام کاربر اجرا نمی‌شود)
-//  - stream:true → اجرا به‌صورت job با رویدادهای زندهٔ job:*
-//  - هر دستور اجراشده (و هر تلاش مسدودشده) در audit ثبت می‌شود (پاک‌سازی‌شده)
+// Console (contract §9) — no free shell; a product security requirement.
+//  - Preview: the allowlist engine (src/allowlist.ts) decides and builds the exact string
+//  - Execute: only the string rebuilt from the validated argv (the user's raw string is never executed)
+//  - stream:true → runs as a job with live job:* events
+//  - Every executed command (and every blocked attempt) is recorded in the audit log (redacted)
 
 import { Router, type Request, type Response } from "express";
 import { randomUUID } from "node:crypto";
@@ -38,12 +38,12 @@ export function createConsoleRouter(deps: ConsoleDeps): Router {
   const sid = (req: Request): string => paramOf(req.params.sid);
 
   /**
-   * بررسی allowlist با زمینهٔ میزبان پروفایل (محدودهٔ curl) + ساخت «برنامهٔ اجرای واقعی».
-   * ریشهٔ headscale بر اساس حالت پروفایل بازسازی می‌شود (§7): در حالت custom با
-   * prefix واقعی باینری/پیکربندی و در حالت system-sudo با پوشش sudo — پیش‌نمایش
-   * همان فرمان واقعی را نشان می‌دهد. اجزای کاربر عیناً از argv اعتبارسنجی‌شدهٔ
-   * allowlist می‌آیند و رشتهٔ نهایی فقط با shellQuote ساخته می‌شود (الزام §۹:
-   * هیچ الحاق رشتهٔ خام کاربر وجود ندارد).
+   * Allowlist check with the profile host context (curl scope) + building the "real execution program".
+   * The headscale root is rebuilt according to profile mode (§7): in custom mode with the
+   * real binary/config prefix, and in system-sudo mode under a sudo wrapper — the preview
+   * shows that exact real command. User components come verbatim from the allowlist-validated
+   * argv, and the final string is built only via shellQuote (§9 requirement:
+   * no raw user string is ever concatenated).
    */
   const plan = async (
     req: Request,
@@ -54,7 +54,7 @@ export function createConsoleRouter(deps: ConsoleDeps): Router {
     exec: { cmd: string; stdin?: string };
   }> => {
     const sid_ = sid(req);
-    const ctx = deps.manager.hsContext(sid_); // نشست باید متصل باشد
+    const ctx = deps.manager.hsContext(sid_); // session must be connected
     const host = deps.manager.get(sid_)?.host;
     const result = checkCommand(cmd, { host });
     if (!result.allowed || result.argv[0] !== "headscale" || ctx.hsMode === "system") {
@@ -77,7 +77,7 @@ export function createConsoleRouter(deps: ConsoleDeps): Router {
     };
   };
 
-  // POST /api/s/:sid/console/preview — بدون اجرا
+  // POST /api/s/:sid/console/preview — without execution
   r.post(
     "/preview",
     wrap(async (req, res) => {
@@ -95,7 +95,7 @@ export function createConsoleRouter(deps: ConsoleDeps): Router {
     }),
   );
 
-  // POST /api/s/:sid/console — اجرا (allowlist-enforced)
+  // POST /api/s/:sid/console — execute (allowlist-enforced)
   r.post(
     "/",
     wrap(async (req, res) => {
@@ -106,7 +106,7 @@ export function createConsoleRouter(deps: ConsoleDeps): Router {
       }
       const { ctx, result, exec } = await plan(req, cmd);
       if (!result.allowed) {
-        // هرگز اجرا نمی‌شود — حتی تلاش هم در audit ثبت می‌شود
+        // Never executed — even the attempt is recorded in the audit log
         deps.audit.log({
           sessionId: sid_,
           action: "console_blocked",

@@ -645,3 +645,73 @@ Stage Summary:
 - ci.yml گم‌شده کاملاً بازسازی شد (546 خط، ۲ شغل/۳۳ استپ) و در محیط تازه تا حد ممکن اعتبارسنجی: کل شغل لینوکسی عملاً یک‌به‌یک اجرا و سبز (pytest 104، تست‌های عامل ۱۲۵، release.sh، build-windows.sh با ۳۰ چک زنده)؛ منطق ۱۸ چک استپ‌های ویندوزی روی باینری واقعی پاس؛ actionlint صفر خطا.
 - صادقانه: رفتار واقعی رانر ویندوزی (اجرای EXE ویندوزی، PowerShell 5.1 واقعی روی رانر، قاعدهٔ دسکتاپ روی باینری ویندوزی) تا فعال‌شدن CI «آزموده‌نشده» می‌ماند — دقیقاً همان چیزی که CI قرار است در اولین اجرا اثبات کند.
 - remote main هرگز لمس نشد (7318212)؛ develop فقط با ورودی همین تسک (worklog) جلو می‌رود.
+Task ID: 18-b
+Agent: general-purpose (build scripts EN)
+Task: Convert Persian comments/log messages to English in build-windows.sh and scripts/release.sh
+
+Work Log:
+- Read worklog context (v0.3.2-beta.2 bug-fix history, guard_windows_text/PYGUARD byte contract, SIGPIPE false-failure pattern).
+- Pre-checked for external couplings: tests do NOT assert on build script log strings (GUARD OK/PARSE OK/[شکست]/خطا: only appear in docs/worklog); desktop-launch.test.ts:178 and security-auth.test.ts:380 DO assert the agent binary's Persian fail-closed output "شروع نمی‌شود" — so the two functional greps for that string in build-windows.sh must stay Persian (translating them would break the live-verification checks = logic change).
+- release.sh: translated header principles, section headers (Persian digits ۱-۵ → 1-5), all die messages, all log messages (▸ [1/5]…[5/5], ⚠ warnings, ✓ summary block). Zero logic/paths/patterns touched.
+- build-windows.sh: translated the full header doc-block, installer/ preconditions, guard_windows_text comment block, the PYGUARD Python block (print messages + inline comments + joined-reason separator "؛ " → "; "), parse_ps1_guard messages, UI build/staging logs, template staging section, all ~40 live-verification chk descriptions, fail() prefix "خطا:" → "error:", chk "[شکست]" → "[FAIL]", zip checks/summary, final honest-note block.
+- Rule-3 keepers preserved byte-for-byte: the grep patterns "نسخهٔ $VERSION" (staged README + zip README) and the two "شروع نمی‌شود" binary-output greps; only the fail-message text around them was translated to English.
+- Verification:
+  * bash -n scripts/release.sh → clean; bash -n mini-services/hem-agent/packaging/build-windows.sh → clean.
+  * PYGUARD heredoc extracted and compiled with python3 -m py_compile → OK; also runs standalone → "GUARD OK — BOM + CRLF + no smart quotes".
+  * grep -nP '[\x{0600}-\x{06FF}]': release.sh → 0 lines; build-windows.sh → exactly 4 lines (245, 325, 441, 507), all functional grep patterns.
+  * No ZWNJ/Arabic punctuation leftovers outside those lines.
+  * Code-skeleton diff (comments stripped, quoted strings normalized) old-vs-new: only trailing-comment translations + the intentional fail() label word differ — commands, variables, flags, quoting, heredoc markers, order of operations identical.
+  * git diff --stat: build-windows.sh 445 lines changed, release.sh 140 lines changed (this task's two files only; other agents' in-flight edits to index.ts/config.ts/templates untouched).
+
+Stage Summary:
+- Files changed: scripts/release.sh (fully English; 0 Persian left), mini-services/hem-agent/packaging/build-windows.sh (fully English except 4 functional Persian grep patterns).
+- Remaining Persian (intentional, by rule 3 / logic-preservation): build-windows.sh:245 grep "نسخهٔ $VERSION" on $STAGE/README-WINDOWS-FA.txt; build-windows.sh:507 grep "نسخهٔ $VERSION" on the zip's README-WINDOWS-FA.txt (README template intentionally stays Persian — end-user Notepad guide); build-windows.sh:325 grep "شروع نمی‌شود" on bare-run binary output; build-windows.sh:441 grep 'شروع نمی‌شود' on refuse2.log (the agent binary's fail-closed message is Persian and test-locked — translating the pattern would break the checks).
+- bash -n: both scripts pass; PYGUARD Python compiles. No logic, paths, quoting, exit codes, or operation order changed — translation-only pass confirmed by skeleton diff.
+
+---
+Task ID: 18-a
+Agent: general-purpose (src comments EN)
+Task: Convert Persian comments to English in hem-agent src files (user directive: English-only comments/CLI/terminal)
+
+Work Log:
+- Read worklog.md tail (Tasks 15–17) for context; confirmed prior agent had already converted index.ts, src/config.ts and packaging/templates/*.ps1 to English (uncommitted in working tree).
+- Processed all 25 assigned files under mini-services/hem-agent/src/ (comments ONLY): allowlist, api, audit, backupctl, console, errors, events, exepath, headscaleExec, hsctl, installer, jobrun, jobstream, profiles, redact, secrets, sessions, ssh, startuplog, sudo, tokenmatch, types, updatectl, remote/headscale, remote/probe.
+- Translated every `//`, `/* */` and `/** */` Persian comment to concise technical English, preserving: section refs (§3, §4, §5, §6, §7, §8, §9, §3.4, §3.5, v0.3.1 §4, v0.3.2 §2), version refs (v0.3.1, v0.3.2, v0.3.2-beta.2, 0.29.5), file paths, env names (HEM_AGENT_TOKEN, HEM_AGENT_AUTH, HEM_AGENT_HOME), error codes (AUTH_NOT_CONFIGURED, SUDO_REQUIRED, ...) and command names. Persian mixed with code identifiers was translated with identifiers kept as-is.
+- Persian string literals (browser-UI messages) deliberately NOT touched: FA_MESSAGES in errors.ts, all HemError/validation messages, installer wizard labels/hints, job log lines (console/installer/backupctl/updatectl/jobrun), SSH/session user-facing errors, hsHealth details, probe warnings/blockers, jobstream RISKY_TITLES + FINAL/UPDATE_STATE_MARKERS (they match real Persian hsctl/installer CLI output), and the api.ts missing-UI HTML page.
+- Methods used: MultiEdit for exact-match blocks, then line-number-based Python rewriting (with Persian-presence assertion per line) for lines containing invisible ZWNJ (U+200C) that defeated exact matching; fixed one indentation slip in ssh.ts (`/* a handler must not kill the agent */` restored to 16-space indent) caught by code-vs-HEAD comparison.
+- Verification (all 25 files): (1) `bunx tsc --noEmit` → exit 0, no errors. (2) Tokenizer-based audit (custom TS-aware scanner: comments/strings/templates/regex): Persian-in-comments = 0 in every file; Persian-outside-strings = 0 in every file; code (with comments stripped) byte-identical to HEAD for all 25 files — only comments changed (allowlist.ts: one whitespace-only diff = an extra newline from reflowing one comment line into two). (3) grep -cP '[\x{0600}-\x{06FF}]' per file: every remaining Persian line confirmed to be a string literal or a regex literal (jobstream.ts STEP_LINE_RE + the "ارتقا به headscale … کامل شد" test regex, which match the real Persian CLI output).
+
+Stage Summary:
+- Files changed: 25/25 assigned src files — all comments now English; zero Persian comments remain.
+- Remaining Persian in these files = browser-UI string literals only (FA_MESSAGES, validation/confirm messages, wizard labels/hints, job-log lines, HTML error page) plus 2 regex literals in jobstream.ts that parse real Persian CLI output — code, strings and formatting otherwise untouched (verified against HEAD).
+- tsc --noEmit: exit 0. Per-file Persian lines before → after: allowlist 35→21, api 103→43, audit 3→0, backupctl 23→14, console 19→4, errors 22→19, events 34→0, exepath 21→0, headscaleExec 13→0, hsctl 10→1, installer 89→55, jobrun 12→3, jobstream 38→19, profiles 11→8, redact 10→0, secrets 11→0, sessions 48→21, ssh 69→16, startuplog 28→0, sudo 13→2, tokenmatch 3→0, types 45→0, updatectl 18→9, remote/headscale 78→45, remote/probe 25→16 (all "after" lines are string literals / CLI-output regexes, never comments).
+
+---
+Task ID: 18-c
+Agent: general-purpose (test files EN)
+Task: Persian comments/test-titles/helper errors → English in agent test files (UI-string assertions and Persian fixtures preserved)
+
+Work Log:
+- Read worklog tail (Tasks 18-a/17 context): src comments, index.ts/config.ts console output, installer templates and build scripts were already English; suite was 195/195 before this task.
+- Processed all 19 assigned files under mini-services/hem-agent/test/ (18 *.test.ts + helpers.ts + server.ts) plus test/fixtures/gen.py:
+  * Translated every `//`, `/* */`, `/** */` Persian comment to concise technical English, preserving refs (§2/§4/§5/§8/§9, v0.3.1/v0.3.2/v0.3.2-beta.2/beta.3, Task 5-d, 5-b labels), env names (HEM_AGENT_TOKEN/AUTH/PORT/HOME/HOST/DESKTOP, DEMO_WITH_SHIM), error codes (AUTH_NOT_CONFIGURED, EADDRINUSE, SUDO_REQUIRED, HOSTKEY_CHANGED, …), paths and command names.
+  * Translated ALL `test(...)` / `test.skipIf(...)` titles and `describe(...)` titles to English (they print to the terminal in `bun test` output) — e.g. "B1 اجرای خالی: …" → "B1 bare run: exit≠0 + Persian message + file log with a fatal record (evidence survives)", keeping non-translatable tokens ($bunfs, HEM_AGENT_AUTH=open, win32+compiled, ←/→, AUTH codes) intact.
+  * helpers.ts: throw messages → English, e.g. `throw new Error("سرور headscale آزمایشی بالا نیامد")` → "test headscale server did not come up".
+  * server.ts: header/inline comments translated; no user-facing strings existed.
+  * Local test-helper throw messages that print on failure were translated too (desktop-launch/packaged/security-auth/installer/jobs: "فرایند مرد…" → "process died…", "job:done نرسید" → "job:done never arrived", etc.).
+  * desktop-launch.test.ts B4: the redaction-test message passed to slog.fatal translated ("خطا با نشانی http://…?token=… در پیام" → "error with address http://…?token=… in the message") — URL/token preserved; assertions (token=***, hex absence) unaffected.
+  * fixtures/gen.py: Persian module docstring + one `# PKCS#1 «…»` comment translated to English.
+- Rule-2 keepers preserved byte-for-byte (verified): all Persian assertion strings (`toContain("کلید میزبان")`, `toBe("خلاصهٔ تست")`, `toContain("یک‌بار")`, `toContain("IP عمومی")`, `toContain("گام 1/17")`, `toContain("هیچ تغییری واقعاً اعمال نمی‌شود")`, `toContain("تنظیم نشده")`, `toContain("دلیل تست: باینری کامپایل‌شده")`, `toContain("ویزارد نصب متوقف می‌شود")`, `toContain("install.sh نیست")`, `toContain("مسیر مورد انتظار بسته")`, `toContain("فایل‌های رابط کاربری پیدا نشد")`, `toContain("راه‌حل")`, `toContain("لغو")`, `toContain("دیسک")`, `toContain("۵) عیب‌یابی")`, detectFinalState/parseStepLine real-output strings, parseBackupList/parseBackupVerify hsctl-output strings); Persian fixture data (profile names "سرور اصلی/۲", "بدون کلید/پیشوند"; jobDone/jobLog Persian summaries in jobs/recovery tests; "# نشان تست" install.sh stub contents; FIXTURE_HTML fake Persian UI in packaged/ui-serving; the `reason: "دلیل تست: باینری کامپایل‌شده"` fixture feeding its matching assertion). When a comment sat on the same line as an assertion, only the comment part was translated.
+- test/shim/headscale untouched (its Persian output simulates the real hsctl CLI and is parsed by tests), per instructions.
+- Method: MultiEdit for exact-match blocks; needle/line-based Python rewriting (with Persian-presence assertion per line) for lines with invisible ZWNJ (U+200C) that defeated exact matching (packaged.test.ts, security-auth.test.ts). ps1-encoding.test.ts's three English comments citing the literal bug-triggering letters were reworded to "Persian letter lam (U+0644, D9 84 …)" / "U+0643 ghaf" so no Persian glyphs remain in comments.
+- Verification:
+  * FULL suite: `PATH="/home/z/.local/pwsh:$PATH" timeout 400 bun test --timeout 240000` → **195 pass / 0 fail**, 11927 expect() calls, 17 files, 62s. All titles now print in English in the terminal.
+  * `bunx tsc --noEmit` → exit 0.
+  * Persian audit (`grep -rnP '[\x{0600}-\x{06FF}]' test/*.ts`): 53 lines remain, all in 11 files. Custom TS tokenizer audit: Persian-in-comments = 0; Persian-outside-strings = 0; Persian in test/describe titles = 0; 54 Persian string literals remain, every one an assertion string, Persian fixture data, or a parsed-output string (spot-check list: installer.test.ts:141-164 parseStepLine/detectFinalState real installer-output fixtures, :207-208 dry-run output assertions, :312/320/331 install.sh stub content, :432/435 dev-reason fixture+assertion, :453-460 error-message assertions; backupctl.test.ts:78-89 hsctl output fixtures; recovery.test.ts:113-143 job summary fixtures, :150 `toContain("لغو")`; secrets.test.ts:81-113 profile-name fixtures; connect.test.ts:261, headscale.test.ts:96, probe.test.ts:84, ui-serving.test.ts:120/130, ps1-encoding.test.ts:132 assertions; jobs.test.ts:45/50 summary fixture+assertion; packaged.test.ts:43 & ui-serving.test.ts:19 FIXTURE_HTML fake Persian UI).
+  * Code-skeleton diff vs HEAD (comments stripped, string contents normalized to §, whitespace collapsed): 18/19 test .ts files byte-identical in code — only comments/titles/messages differ; the sole exceptions are benign: gen.py (straight quotes inside the translated docstring) and ps1-encoding.test.ts (quote-style + T5b test added by a PREVIOUS agent's uncommitted work, not this task; my 3 edits there were comment-only).
+  * Note: ps1-encoding.test.ts's large git diff vs HEAD is mostly prior uncommitted work from earlier tasks (English conversion + T5b), not this task's changes.
+
+Stage Summary:
+- Files changed (this task): all 19 files in test/ (allowlist, auth, backupctl, connect, console, desktop-launch, exepath, headscale, installer, jobs, packaged, probe, ps1-encoding, recovery, secrets, security-auth, ui-serving, helpers.ts, server.ts) + test/fixtures/gen.py — every comment, describe/test title, and helper throw-message is now English.
+- Remaining Persian in test/ = assertions/fixtures/parsed-output ONLY (53 lines, 54 string literals): Persian API/UI assertion strings, Persian fixture data (profile names, job summaries, FIXTURE_HTML UI stubs, install.sh stub content), and real Persian hsctl/installer output strings fed to parsers — all intentionally Persian per rule 2. test/shim/headscale untouched (simulates the real Persian hsctl CLI).
+- Suite: 195 pass / 0 fail (full run, real SSH test server + real headscale v0.29.5). tsc --noEmit: exit 0. Zero logic/structure changes (skeleton-verified); translation-only pass.

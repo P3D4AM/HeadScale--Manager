@@ -1,7 +1,7 @@
-// ⚠️ فایل تولیدشده — ویرایش دستی ممنوع (scripts/generate-docs.ts)
-// منبع: headscale-easy-manager/docs/fa/*.md — بازتولید: bun run docs:generate
-// (اصلاح ایراد ۴.۹: محتوا در زمان ساخت تولید می‌شود تا خروجی static export
-//  و بستهٔ ویندوز به fs/اندپوینت زمان-اجرا وابسته نباشد.)
+// ⚠️ GENERATED FILE — do not edit by hand (scripts/generate-docs.ts)
+// Source: headscale-easy-manager/docs/fa/*.md — regenerate: bun run docs:generate
+// (Fix 4.9: content is generated at build time so the static export output
+//  and the Windows package do not depend on run-time fs/endpoints.)
 
 export interface GeneratedDoc {
   order: number
@@ -12,7 +12,7 @@ export interface GeneratedDoc {
   content: string
 }
 
-/** همهٔ فصل‌ها، مرتب‌شده بر اساس order فرانت‌متر (content بدون فرانت‌متر). */
+/** All chapters, ordered by the frontmatter order (content without frontmatter). */
 export const DOCS: GeneratedDoc[] = [
   {
     "order": 1,

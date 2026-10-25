@@ -1,9 +1,9 @@
-// SshSession — پوشش ssh2 Client با:
-//  - اتصال password/کلید (+passphrase)، readyTimeout و keepalive
-//  - hook بررسی کلید میزبان (اثرانگشت SHA256 + MD5) با قابلیت «پارک» برای TOFU دو مرحله‌ای
-//  - exec با استریم زنده، مهلت زمانی و کشتن کانال در timeout
-//  - execSudo: رمز فقط از stdin (هرگز در argv)
-//  - readFile/writeFile با base64 (چانک‌های ≤48KB)
+// SshSession — a wrapper over the ssh2 Client with:
+//  - password/key connect (+passphrase), readyTimeout and keepalive
+//  - host key verification hook (SHA256 + MD5 fingerprints) with park support for two-step TOFU
+//  - exec with live streaming, timeout, and channel kill on timeout
+//  - execSudo: password only via stdin (never in argv)
+//  - readFile/writeFile via base64 (chunks ≤48KB)
 
 import { Client } from "ssh2";
 import { createHash, randomBytes } from "node:crypto";
@@ -23,22 +23,22 @@ export interface SshSessionOptions {
   password?: string;
   privateKey?: string;
   passphrase?: string;
-  /** تصمیم‌گیرندهٔ کلید میزبان — اگر تعیین نشود همه‌چیز پذیرفته می‌شود (فقط برای تست) */
+  /** Host key decider — if unset everything is accepted (tests only) */
   verifyHostKey?: (fp: HostKeyFingerprint) => HostKeyVerdict;
-  /** خطای بعد از اتصال (برای به‌روزرسانی وضعیت نشست) */
+  /** Post-connect error (used to update session status) */
   onConnectedError?: (err: Error) => void;
   onClose?: () => void;
   onBanner?: (banner: string) => void;
 }
 
-/** quoting امن یک آرگومان برای ساخت رشتهٔ شل */
+/** Safely quote one argument for building a shell string */
 export function shellQuote(s: string): string {
   if (s.length === 0) return "''";
   if (/^[A-Za-z0-9_@%+=:,./-]+$/.test(s)) return s;
   return `'${s.replace(/'/g, "'\\''")}'`;
 }
 
-/** استخراج الگوریتم کلید از بلاب wire-format (طول۴ + نام + بدنه) */
+/** Extract the key algorithm from the wire-format blob (len4 + name + body) */
 function algoOfWireBlob(raw: Buffer): string {
   try {
     if (raw.length > 8) {
@@ -49,12 +49,12 @@ function algoOfWireBlob(raw: Buffer): string {
       }
     }
   } catch {
-    // نادیده — الگوریتم نامشخص می‌ماند
+    // ignored — the algorithm stays unknown
   }
   return "unknown";
 }
 
-/** اثرانگشت کلید میزبان: SHA256(base64) به سبک OpenSSH + MD5 hex */
+/** Host key fingerprint: OpenSSH-style SHA256(base64) + MD5 hex */
 export function fingerprintOf(rawKey: Buffer): HostKeyFingerprint {
   const sha256 = `SHA256:${createHash("sha256").update(rawKey).digest("base64")}`;
   const md5 = createHash("md5")
@@ -73,9 +73,9 @@ export class SshSession {
   readonly host: string;
   readonly port: number;
   readonly username: string;
-  /** اثرانگشت کلید میزبان ارائه‌شده در این اتصال */
+  /** Host key fingerprint presented on this connection */
   presentedHostKey: HostKeyFingerprint | null = null;
-  /** وقتی verifyHostKey رأی «reject» داده (مغایرت) — مدیر نشست آن را به HOSTKEY_CHANGED تبدیل می‌کند */
+  /** Set when verifyHostKey voted reject (mismatch) — the session manager converts it to HOSTKEY_CHANGED */
   hostKeyRejected = false;
 
   private client: Client;
@@ -86,7 +86,7 @@ export class SshSession {
   private banner: string | null = null;
   private readyResolve!: () => void;
   private readyReject!: (e: Error) => void;
-  /** پس از acceptHostKey با این پرامیس تا ready صبر می‌شود */
+  /** After acceptHostKey, callers wait on this promise until ready */
   readonly readyPromise: Promise<void>;
 
   constructor(opts: SshSessionOptions) {
@@ -99,7 +99,7 @@ export class SshSession {
       this.readyResolve = res;
       this.readyReject = rej;
     });
-    // جلوگیری از unhandledRejection وقتی کسی منتظر ready نیست
+    // Prevent unhandledRejection when nobody awaits ready
     this.readyPromise.catch(() => undefined);
   }
 
@@ -107,7 +107,7 @@ export class SshSession {
     return this.closed;
   }
 
-  /** متن banner سرور (در صورت ارسال) */
+  /** Server banner text (if sent) */
   get bannerText(): string | null {
     return this.banner;
   }
@@ -115,23 +115,23 @@ export class SshSession {
   private closeHandlers = new Set<() => void>();
   private errorHandlers = new Set<(e: Error) => void>();
 
-  /** ثبت callback بسته‌شدن اتصال (SessionManager وضعیت نشست را به‌روز می‌کند) */
+  /** Register a close callback (SessionManager updates session status) */
   registerCloseHandler(fn: () => void): void {
     this.closeHandlers.add(fn);
   }
 
-  /** ثبت callback خطای بعد از اتصال */
+  /** Register a post-connect error callback */
   registerErrorHandler(fn: (e: Error) => void): void {
     this.errorHandlers.add(fn);
   }
 
   /**
-   * اتصال. نتیجه:
-   *  - connected: handshake + احراز هویت کامل
-   *  - fingerprint-required: کلید میزبان ناشناخته؛ نشست «پارک» شده (نیمه‌کاره، بدون احراز هویت) و
-   *    منتظر acceptHostKey()/rejectHostKey() است.
-   * نکته: readyTimeout داخلی ssh2 را غیرفعال کردیم چون تایمر آن پارک TOFU را می‌کشد؛
-   * مهلت ۱۵ ثانیه‌ای اتصال را خودمان اعمال می‌کنیم (race) که با park زودتر از آن تمام می‌شود.
+   * Connect. Outcome:
+   *  - connected: handshake + full authentication
+   *  - fingerprint-required: unknown host key; the session is parked (half-open, unauthenticated)
+   *    waiting for acceptHostKey()/rejectHostKey().
+   * Note: the ssh2 built-in readyTimeout is disabled because its timer kills the TOFU park;
+   * we apply the 15s connect deadline ourselves (race) which resolves earlier on park.
    */
   connect(): Promise<ConnectOutcome> {
     return new Promise<ConnectOutcome>((resolve, reject) => {
@@ -166,8 +166,8 @@ export class SshSession {
           if (!this.parked) {
             finish(() => resolve({ kind: "connected", banner: this.banner ?? undefined }));
           }
-          // اگر پارک بوده: resolve قبلاً با fingerprint-required انجام شده و
-          // کسی که acceptHostKey صدا زده، منتظر readyPromise است.
+          // If parked: resolve already returned fingerprint-required and
+          // whoever called acceptHostKey is waiting on readyPromise.
         })
         .on("error", (err: Error) => {
           clearHandshakeTimer();
@@ -184,7 +184,7 @@ export class SshSession {
               try {
                 h(err);
               } catch {
-                /* handler نباید agent را بکشد */
+                /* a handler must not kill the agent */
               }
             }
           }
@@ -198,7 +198,7 @@ export class SshSession {
               try {
                 h();
               } catch {
-                /* handler نباید agent را بکشد */
+                /* a handler must not kill the agent */
               }
             }
           }
@@ -217,7 +217,7 @@ export class SshSession {
         host: this.opts.host,
         port: this.opts.port,
         username: this.opts.username,
-        readyTimeout: 0, // تایمر داخلی غیرفعال — پارک TOFU نباید بلافاصله بمیرد
+        readyTimeout: 0, // built-in timer disabled — the TOFU park must not die immediately
         keepaliveInterval: KEEPALIVE_MS,
         hostVerifier: (key: Buffer, verify: (ok: boolean) => void): void => {
           const fp = fingerprintOf(key);
@@ -232,7 +232,7 @@ export class SshSession {
             verify(false);
             return;
           }
-          // park — منتظر تصمیم صریح کاربر (حداکثر ۱۲۰ ثانیه را SessionManager اعمال می‌کند)
+          // park — waiting for the explicit user decision (the 120s cap is enforced by SessionManager)
           this.parked = true;
           this.pendingVerify = verify;
           clearHandshakeTimer();
@@ -246,7 +246,7 @@ export class SshSession {
       try {
         this.client.connect(connectOpts as Parameters<Client["connect"]>[0]);
       } catch (e) {
-        // ssh2 برخی خطاها (مثل passphrase نادرست) را همگام پرتاب می‌کند
+        // ssh2 throws some errors synchronously (e.g. wrong passphrase)
         clearHandshakeTimer();
         const mapped = this.mapConnectError(e instanceof Error ? e : new Error(String(e)));
         this.readyReject(mapped);
@@ -287,7 +287,7 @@ export class SshSession {
     return new HemError("CONNECT_FAILED", undefined, { sshMessage: msg });
   }
 
-  /** تأیید کلید میزبان پارک‌شده → ادامهٔ handshake و احراز هویت */
+  /** Accept the parked host key → resume handshake and authentication */
   acceptHostKey(): Promise<void> {
     if (!this.pendingVerify) {
       return this.closed
@@ -297,7 +297,7 @@ export class SshSession {
     const verify = this.pendingVerify;
     this.pendingVerify = null;
     verify(true);
-    // مهلت محافظ پس از تأیید (handshake باید ظرف چند ثانیه کامل شود)
+    // guard timeout after acceptance (the handshake should complete within seconds)
     return Promise.race([
       this.readyPromise,
       new Promise<never>((_, rej) =>
@@ -315,7 +315,7 @@ export class SshSession {
     ]);
   }
 
-  /** رد کلید میزبان پارک‌شده → بستن اتصال */
+  /** Reject the parked host key → close the connection */
   rejectHostKey(): void {
     const verify = this.pendingVerify;
     this.pendingVerify = null;
@@ -323,7 +323,7 @@ export class SshSession {
     this.close();
   }
 
-  /** اجرای دستور با استریم، مهلت زمانی و کشتن کانال در timeout */
+  /** Run a command with streaming, timeout, and channel kill on timeout */
   async exec(cmd: string, opts: ExecOptions = {}): Promise<ExecResult> {
     if (this.closed) {
       throw new HemError("NOT_CONNECTED", "نشست SSH بسته است؛ دوباره متصل شوید.");
@@ -334,7 +334,7 @@ export class SshSession {
       let stderr = "";
       let exitCode: number | null = null;
       let settled = false;
-      // ssh2 interop: نوع stream در @types قدیمی است؛ فیلدها با runtime سازگارند.
+      // ssh2 interop: the stream type in @types is old; the fields match the runtime.
       let stream: {
         on: (ev: string, fn: (d?: Buffer) => void) => void;
         stderr: { on: (ev: string, fn: (d?: Buffer) => void) => void };
@@ -346,7 +346,7 @@ export class SshSession {
       const timer = setTimeout(() => {
         if (settled) return;
         settled = true;
-        // کشتن کانال: اول سیگنال، بعد بستن — فرزند سمت سرور باید بمیرد
+        // Kill the channel: signal first, then close — the server-side child must die
         try {
           stream?.signal?.("KILL");
         } catch {
@@ -406,15 +406,15 @@ export class SshSession {
     });
   }
 
-  /** کانال‌های exec فعال — برای لغو job ها (سیگنال INT + بستن کانال) */
+  /** Active exec channels — for job cancellation (INT signal + channel close) */
   private activeChannels = new Set<{
     signal?: (s: string) => void;
     close: () => void;
   }>();
 
   /**
-   * exec قابل‌لغو (برای job های زنده). cancel(): تلاش برای SIGINT و سپس بستن کانال باز —
-   * فرزند سمت سرور می‌میرد و نتیجه با cancelled:true (یا خطای EXEC_FAILED) برمی‌گردد.
+   * Cancellable exec (for live jobs). cancel(): tries SIGINT then closes the open channel —
+   * the server-side child dies and the result returns with cancelled:true (or an EXEC_FAILED error).
    */
   execCancellable(
     cmd: string,
@@ -449,11 +449,11 @@ export class SshSession {
   }
 
   /**
-   * اجرای دستور با sudo:
-   *  - root: بدون sudo
+   * Run a command with sudo:
+   *  - root: no sudo
    *  - nopasswd: sudo -n <cmd>
-   *  - password: sudo -S -p '' <cmd> — رمز فقط از stdin، هرگز در argv
-   *  - none: خطای SUDO_REQUIRED
+   *  - password: sudo -S -p '' <cmd> — password via stdin only, never in argv
+   *  - none: SUDO_REQUIRED error
    */
   async execSudo(
     cmd: string,
@@ -475,7 +475,7 @@ export class SshSession {
     );
   }
 
-  /** خواندن فایل باینری-امن از سرور (base64) */
+  /** Binary-safe file read from the server (base64) */
   async readFile(path: string, timeoutMs = 20_000): Promise<Buffer> {
     const res = await this.exec(`base64 -w0 ${shellQuote(path)}`, { timeoutMs });
     if (res.code !== 0) {
@@ -487,12 +487,12 @@ export class SshSession {
     return Buffer.from(res.stdout.trim(), "base64");
   }
 
-  /** نوشتن فایل روی سرور با base64 چانک‌شده (هر چانک ≤ ۲۴K کاراکتر — سقف بستهٔ SSH) */
+  /** Write a file on the server via chunked base64 (each chunk ≤ 24K chars — the SSH packet limit) */
   async writeFile(path: string, content: Buffer | string, timeoutMs = 30_000): Promise<void> {
     const b64 = Buffer.from(content).toString("base64");
-    // حداکثر اندازهٔ چانک: رشتهٔ فرمان باید در «یک بستهٔ انتقال SSH» (~۳۲KB) جا شود —
-    // ۴۸K کاراکتر عملاً «Unable to exec» می‌داد و اتصال را می‌کشت (باگ واقعی، این جلسه اصلاح شد).
-    const CHUNK = 24_000; // کاراکترهای base64 (≈ ۱۸KB دیتای خام در هر چانک)
+    // Max chunk size: the command string must fit in one SSH transport packet (~32KB) —
+    // 48K chars effectively produced Unable to exec and killed the connection (a real bug, fixed this session).
+    const CHUNK = 24_000; // base64 chars (≈ 18KB raw data per chunk)
     const q = shellQuote(path);
     for (let i = 0; i < b64.length; i += CHUNK) {
       const part = b64.slice(i, i + CHUNK);
@@ -506,7 +506,7 @@ export class SshSession {
         });
       }
     }
-    // فایل خالی
+    // empty file
     if (b64.length === 0) {
       const res = await this.exec(`: > ${q}`, { timeoutMs });
       if (res.code !== 0) {
@@ -515,7 +515,7 @@ export class SshSession {
     }
   }
 
-  /** نام فایل موقت منحصربه‌فرد روی سرور (در /tmp) — پسوند لازم است چون headscale/viper نوع فایل را از پسوند می‌خواند */
+  /** Unique temp file name on the server (under /tmp) — the extension matters because headscale/viper reads the file type from it */
   static remoteTempName(prefix = "hem", ext = ""): string {
     return `/tmp/${prefix}-${randomBytes(6).toString("hex")}${ext}`;
   }
@@ -538,7 +538,7 @@ export class SshSession {
     } catch {
       /* ignore */
     }
-    // اطمینان نهایی
+    // final safety net
     setTimeout(() => {
       try {
         this.client.destroy();

@@ -1,30 +1,35 @@
-// hem-agent — نقطهٔ شروع
-// express + socket.io روی 127.0.0.1:3005 (HEM_AGENT_HOST/HEM_AGENT_PORT)
-// درخواست‌های دروازه با ?XTransformPort=3005 می‌رسند و express خودش آن را نادیده می‌گیرد.
+// hem-agent — entry point
+// express + socket.io on 127.0.0.1:3005 (HEM_AGENT_HOST/HEM_AGENT_PORT)
+// Gateway requests arrive with ?XTransformPort=3005; express ignores it by itself.
 //
-// احراز هویت (v0.3.2 §2 — fail-closed):
-//   • حالت token (پیش‌فرض اجرای واقعی): همهٔ /api (به‌جز health عمومیِ حداقلی)
-//     و همهٔ WebSocketها به هدر X-HEM-Token یا کوکی hem_token نیاز دارند.
-//   • حالت دسکتاپ (HEM_DESKTOP=1/--desktop، یا قاعدهٔ بستهٔ ویندوزی v0.3.2-beta.2:
-//     باینری کامپایل‌شده روی win32 بدون هیچ توکن/صراحت = دابل‌کلیک): اگر
-//     HEM_AGENT_TOKEN تنظیم نشده باشد، یک توکن تصادفی امن برای «همین اجرا»
-//     ساخته می‌شود؛ نشانی UI با ?token= چاپ و مرورگر باز می‌شود؛ تبادل
-//     token→کوکی «یک‌بارمصرف» است (v0.3.1 §4): پس از اولین استفاده، لینک قدیمی
-//     در تاریخچهٔ مرورگر دیگر معتبر نیست؛ کوکی جلسه‌ای HttpOnly/SameSite=Strict
-//     روی سیستم کاربر می‌نشیند و 303 نشانی را بدون token تمیز می‌کند. احراز
-//     هویت API فقط با هدر X-HEM-Token یا همان کوکی است — token در query
-//     هیچ‌وقت معتبر نیست.
-//   • حالت open (HEM_AGENT_AUTH=open — استثنای مستندِ توسعهٔ محلی):
-//     بدون احراز هویت، فقط روی loopback؛ روی آدرس شبکه‌ای شروع نمی‌شود.
-//   • بدون توکن و بدون open (و بیرون از قاعدهٔ دسکتاپ ویندوزی): سرویس با
-//     خطای روشن «شروع نمی‌شود» (exit غیرصفر).
-//   • WebSocket هم مانند HTTP توکن‌سنجی می‌شود (events.ts) — هم‌ارز و سازگار.
+// Authentication (v0.3.2 §2 — fail-closed):
+//   • token mode (default for real deployments): every /api route (except the
+//     minimal public health endpoint) and every WebSocket requires the
+//     X-HEM-Token header or the hem_token cookie.
+//   • desktop mode (HEM_DESKTOP=1/--desktop, or the Windows packaged rule of
+//     v0.3.2-beta.2: compiled binary on win32 with no token/explicit config =
+//     user double-click): if HEM_AGENT_TOKEN is not set, a secure random token
+//     is generated "for this run only"; the UI URL with ?token= is printed and
+//     the browser opens; the token->cookie exchange is one-time-use
+//     (v0.3.1 §4): after first use, the old link in the browser history is no
+//     longer valid; a session cookie HttpOnly/SameSite=Strict settles on the
+//     user's machine and a 303 cleans the URL from the token. API
+//     authentication is only via the X-HEM-Token header or that cookie — a
+//     token in the query string is never valid.
+//   • open mode (HEM_AGENT_AUTH=open — documented local-development exception):
+//     no authentication, loopback only; never starts on a network address.
+//   • No token and no open (and outside the Windows desktop rule): the service
+//     "refuses to start" with a clear error (non-zero exit).
+//   • WebSocket is token-checked exactly like HTTP (events.ts) — equivalent
+//     and consistent.
 //
-// تشخیصِ «بسته‌شدن سریع EXE» (v0.3.2-beta.2): هر شکستِ راه‌اندازی به «لاگ
-// فایل‌محور» (<home>/logs/hem-agent.log — src/startuplog.ts) نوشته می‌شود و
-// پیام کنسول، مسیر همان لاگ را می‌گوید؛ در اجرای تعاملی ویندوزی (isTTY)
-// یک پیام‌گیرِ خطا (Popup ویندوزی، ۳۰ثانیه‌ای، هرگز بی‌پایان مسدود نمی‌کند)
-// هم نشان داده می‌شود. اجرای سرویس/پس‌زمینه هیچ‌وقت با pause قفل نمی‌شود.
+// Fast-close EXE detection (v0.3.2-beta.2): every startup failure is written to
+// a "file-based diagnostic log" (<home>/logs/hem-agent.log — src/startuplog.ts)
+// and the console message points at that log path; in an interactive Windows
+// run (isTTY) an error popup is also shown (native Windows Popup, 30 seconds,
+// never blocks indefinitely). Service/background execution is never locked by a
+// pause. (v0.3.2-beta.3: per user directive, ALL terminal output and comments
+// are English-only — the browser UI stays Persian.)
 
 import { spawn } from "node:child_process";
 import { randomBytes } from "node:crypto";
@@ -53,32 +58,33 @@ import { Redactor } from "./src/redact";
 import { createStartupLog, type StartupLog } from "./src/startuplog";
 
 // ---------------------------------------------------------------------------
-// خروجِ مهلک — همیشه: کنسول + لاگ تشخیصی (+ در ویندوزِ تعاملی، پیام‌گیر).
-// exitCode بلافاصله برمی‌گردد؛ popup جدا (detached) نمایش داده می‌شود.
+// Fatal exit — always: console + diagnostic log (+ on interactive Windows, a
+// popup). exitCode returns immediately; the popup is shown by a separate
+// (detached) process.
 // ---------------------------------------------------------------------------
 function fatalExit(startupLog: StartupLog, code: string, message: string, err?: unknown): never {
   startupLog.fatal(code, message, err);
   const logPath = startupLog.logPath;
-  console.error("[hem-agent] راه‌اندازی متوقف شد:");
+  console.error("[hem-agent] startup aborted:");
   console.error(`[hem-agent] ${code}`);
   console.error(message);
-  console.error(`[hem-agent] جزئیات کامل (زمان/مرحله/Stack Trace): ${logPath}`);
-  console.error("[hem-agent] برای دیدن زندهٔ خروجی، برنامه را از PowerShell اجرا کنید و بعد از خروج، $LASTEXITCODE را ببینید.");
+  console.error(`[hem-agent] full details (time/stage/stack trace): ${logPath}`);
+  console.error("[hem-agent] to see live output, run the app from PowerShell and check $LASTEXITCODE after it exits.");
   showFatalDialog(code, logPath);
   process.exit(1);
 }
 
-/** پیام‌گیر خطای ویندوزی — فقط در اجرای تعاملی (isTTY)؛ ۳۰ ثانیه خودکار بسته می‌شود */
+/** Native Windows error popup — interactive runs (isTTY) only; auto-closes after 30 seconds */
 function showFatalDialog(code: string, logPath: string): void {
   try {
     if (process.platform !== "win32") return;
-    if (!process.stdout.isTTY) return; // سرویس/CI/پایپ: هیچ پنجره‌ای نباید باز شود
+    if (!process.stdout.isTTY) return; // service/CI/pipe: no window should ever open
     const text =
-      `مدیر آسان هداسکیل راه‌اندازی نشد.\n` +
-      `کد خطا: ${code}\n\n` +
-      `جزئیات کامل در فایل لاگ:\n${logPath}\n\n` +
-      `(این پیام ۳۰ ثانیه دیگر خودش بسته می‌شود)`;
-    const title = "مدیر آسان هداسکیل — خطای راه‌اندازی";
+      `Headscale Easy Manager failed to start.\n` +
+      `Error code: ${code}\n\n` +
+      `Full details in the log file:\n${logPath}\n\n` +
+      `(This message closes automatically in 30 seconds)`;
+    const title = "Headscale Easy Manager - startup error";
     const ps = text.replace(/'/g, "''");
     const pt = title.replace(/'/g, "''");
     const child = spawn(
@@ -110,15 +116,16 @@ async function main(): Promise<void> {
   const jobs = new JobManager();
   const manager = new SessionManager({ home, profiles, secrets, audit, redactor });
 
-  // لاگ تشخیصیِ راه‌اندازی — از این پس هیچ شکستی «بی‌شاهد» از بین نمی‌رود.
+  // Startup diagnostic log — from now on no failure dies "unwitnessed".
   const startupLog = createStartupLog(home, redactor);
 
-  // در باینری کامپایل‌شده (exe ویندوزی / باینری لینوکسی)، import.meta.dir به فایل‌سیستم
-  // مجازی باندل اشاره می‌کند (/$bunfs روی پوزیکس، C:\$bunfs روی ویندوز)؛ پوشهٔ «کنار
-  // خود برنامه» (جایی که ui/ در بسته قرار دارد) باید از process.execPath گرفته شود.
-  // تشخیص در src/exepath.ts — عضویت «$bunfs» در مسیر، نه پیشوند مطلق پوزیکس
-  // (باگ ویندوز v0.3.1: startsWith("/$bunfs") روی C:\$bunfs رد می‌شد و UI هرگز
-  // سرو نمی‌شد؛ GET / به‌جای رابط، JSON مبهم می‌داد).
+  // In a compiled binary (Windows exe / Linux binary), import.meta.dir points
+  // into the bundle's virtual filesystem (/$bunfs on POSIX, C:\$bunfs on
+  // Windows); the "folder next to the program itself" (where ui/ lives in the
+  // package) must be derived from process.execPath. Detection lives in
+  // src/exepath.ts — membership of "$bunfs" in the path, not a POSIX absolute
+  // prefix (Windows bug v0.3.1: startsWith("/$bunfs") failed on C:\$bunfs and
+  // the UI was never served; GET / returned ambiguous JSON instead of the UI).
   const exeDir = programDir(import.meta.dir);
   const uiDir = path.join(exeDir, "ui");
   const uiExists = fs.existsSync(uiDir);
@@ -131,12 +138,15 @@ async function main(): Promise<void> {
       `ui=${uiExists ? "found" : "missing"} installer=${rootStatus.ok ? `ok(${rootStatus.source})` : "not-found"}`,
   });
 
-  // --- سیاست احراز هویت (v0.3.2 §2 — fail-closed) --------------------------
-  // قدیم: «نبودن توکن» یعنی سرویسِ بی‌دفاع روی همهٔ /api و WebSocket — اصلاح شد:
-  //   • توکن صریح یا (دسکتاپ) تولیدی → حالت token؛
-  //   • HEM_AGENT_AUTH=open صریح → استثنای مستندِ توسعهٔ محلی، فقط روی loopback؛
-  //   • هیچ‌کدام (و بیرون از قاعدهٔ دسکتاپِ بستهٔ ویندوزی) → «شروع نمی‌شود».
-  // تولید توکن دسکتاپ همین‌جا انجام می‌شود (randomBytes(24) — امن و تصادفی).
+  // --- Auth policy (v0.3.2 §2 — fail-closed) ---------------------------------
+  // Old behavior: "no token" meant an unprotected service on all of /api and
+  // WebSocket — fixed:
+  //   • explicit token or (desktop) generated token -> token mode;
+  //   • explicit HEM_AGENT_AUTH=open -> documented local-development exception,
+  //     loopback only;
+  //   • neither (and outside the Windows desktop rule) -> "refuses to start".
+  // Desktop token generation happens right here (randomBytes(24) — secure and
+  // random).
   const isDesktop = desktopMode();
   const host = agentHost();
   const port = agentPort();
@@ -159,19 +169,21 @@ async function main(): Promise<void> {
     detail: `host=${host} port=${port} desktop=${isDesktop}${plan.tokenGenerated ? " token=generated-for-this-run" : plan.mode === "token" ? " token=explicit" : " no-auth"}`,
   });
 
-  // حالت open فقط روی loopback — در غیر این صورت شروع نمی‌شود (خطای روشن):
-  // HEM_AGENT_HOST نباید بتواند سرویسِ بی‌احراز هویتی روی شبکه بگذارد.
+  // open mode is loopback-only — otherwise it refuses to start (clear error):
+  // HEM_AGENT_HOST must never be able to put an unauthenticated service on
+  // the network.
   if (plan.mode === "open" && !isLoopbackHost(host)) {
     fatalExit(
       startupLog,
       "OPEN_REQUIRES_LOOPBACK",
-      `حالت open (بدون احراز هویت) فقط روی loopback مجاز است — HEM_AGENT_HOST="${host}" یک آدرس شبکه‌ای است؛ سرویس بی‌احراز هویت روی شبکه شروع نمی‌شود. برای دسترسی شبکه‌ای، HEM_AGENT_TOKEN را تنظیم کنید (و HEM_AGENT_AUTH را حذف کنید).`,
+      `open mode (no authentication) is allowed on loopback only — HEM_AGENT_HOST="${host}" is a network address; an unauthenticated service will not start on the network. For network access, set HEM_AGENT_TOKEN (and remove HEM_AGENT_AUTH).`,
     );
   }
-  // حالت token روی آدرس شبکه‌ای = انتخاب آگاهانه — هشدار صریح، شروع ادامه می‌یابد:
+  // token mode on a network address = a conscious choice — explicit warning,
+  // startup continues:
   if (plan.mode === "token" && !isLoopbackHost(host)) {
     console.warn(
-      `[hem-agent] ⚠ سرویس روی آدرس شبکه‌ای "${host}" بایند می‌شود — مطمئن شوید توکن قوی/تصادفی است و ترافیک از طریق پروکسی معتمد/HTTPS می‌گذرد.`,
+      `[hem-agent] WARNING: the service will bind on network address "${host}" — make sure the token is strong/random and traffic goes through a trusted proxy/HTTPS.`,
     );
     startupLog.warn("listen", "network-bind-with-token", { detail: `host=${host}` });
   }
@@ -185,8 +197,9 @@ async function main(): Promise<void> {
     jobs,
     token,
     authMode: plan.mode,
-    // uiDir فقط وقتی واقعاً موجود است سرو می‌شود؛ مسیر «مورد انتظار» همیشه
-    // پاس داده می‌شود تا صفحهٔ خطا/لاگ دقیق بگوید کجا گشسته‌ایم (نه JSON مبهم).
+    // uiDir is served only when it actually exists; the "expected" path is
+    // always passed so the error page/log can say exactly where we looked
+    // (not ambiguous JSON).
     uiDir: uiExists ? uiDir : undefined,
     uiDirExpected: uiDir,
     version: AGENT_VERSION,
@@ -195,15 +208,16 @@ async function main(): Promise<void> {
 
   const uiUrl = `http://127.0.0.1:${port}/${token ? `?token=${token}` : ""}`;
 
-  // صداقت راه‌اندازی (v0.3.1 §1) + خطای روشن نبودِ UI: اگر ui/ کنار برنامه نیست،
-  // هرگز سکوت نمی‌کنیم — لاگ صریح چاپ می‌شود و GET / صفحهٔ خطای فارسیِ روشن
-  // می‌دهد (api.ts)، نه JSON مبهم. (باگ ویندوز v0.3.1 دقیقاً همین‌جا بی‌صدا رد شد.)
+  // Startup honesty (v0.3.1 §1) + clear error when UI is missing: if ui/ is
+  // not next to the program, we never stay silent — an explicit log line is
+  // printed and GET / returns a clear error page (api.ts), not ambiguous
+  // JSON. (The Windows bug of v0.3.1 slipped through exactly here, silently.)
   if (!uiExists) {
     console.error(`[hem-agent] UI NOT FOUND — expected ui/ at: ${uiDir}`);
     console.error(
-      "[hem-agent] ⚠ بدون پوشهٔ ui/ کنار برنامه، رابط کاربری سرو نمی‌شود؛ GET / صفحهٔ خطای روشن می‌دهد (نه برنامه). " +
-        "بستهٔ رسمی ZIP را «کامل» استخراج کنید — hem-manager.exe و ui/ و installer/ باید کنار هم بمانند؛ " +
-        "EXE را از داخل پیش‌نمایش ZIP اجرا نکنید.",
+      "[hem-agent] WARNING: without a ui/ folder next to the program, the web UI is not served; GET / returns a clear error page (not the app). " +
+        "Extract the official ZIP package COMPLETELY — hem-manager.exe and ui/ and installer/ must stay together; " +
+        "do not run the EXE from inside the ZIP preview.",
     );
     startupLog.warn("ui", "missing", { detail: `expected=${uiDir}` });
   }
@@ -214,7 +228,7 @@ async function main(): Promise<void> {
       `[hem-agent] installer: NOT FOUND (source: ${rootStatus.source}) — expected: ${rootStatus.path}`,
     );
     console.log(
-      "[hem-agent] ⚠ بدون installer/ کنار برنامه، ویزارد نصب با خطای روشن متوقف می‌شود (هرگز موفق/آماده اعلام نمی‌شود). بستهٔ ویندوزی رسمی این پوشه را دارد؛ HEM_PROJECT_ROOT هم قابل تنظیم است.",
+      "[hem-agent] WARNING: without an installer/ folder next to the program, the install wizard stops with a clear error (it never reports success/ready). The official Windows package ships this folder; HEM_PROJECT_ROOT is also configurable.",
     );
     startupLog.warn("installer", "not-found", { detail: `expected=${rootStatus.path}` });
   }
@@ -227,34 +241,35 @@ async function main(): Promise<void> {
     );
     if (plan.mode === "open") {
       console.warn(
-        "[hem-agent] ⚠ حالت open فعال است: /api و WebSocket «بدون احراز هویت» روی همین loopback در دسترس‌اند. این حالت فقط برای توسعهٔ محلی است؛ در اجرای واقعی HEM_AGENT_TOKEN را تنظیم کنید.",
+        "[hem-agent] WARNING: open mode is active: /api and WebSocket are accessible WITHOUT authentication on this loopback only. This mode is for local development; set HEM_AGENT_TOKEN for real deployments.",
       );
     }
     if (plan.desktop) {
       if (plan.tokenGenerated) {
         console.log("[hem-agent] token: generated for this run (set HEM_AGENT_TOKEN to pin it)");
-        console.log("[hem-agent] این نشانی یک‌بارمصرف است — پس از اولین بازشدن، لینک قدیمی (تاریخچهٔ مرورگر) دیگر معتبر نیست.");
+        console.log("[hem-agent] this URL is one-time-use — after the first open, the old link (browser history) is no longer valid.");
       }
-      // نشانی همیشه چاپ می‌شود — حتی اگر بازکردن مرورگر شکست بخورد.
-      // (تنها محلِ چاپِ توکن: کنسولِ خودِ کاربر روی سیستم خودش — کانال تحویلِ
-      // بوت‌استرپ دسکتاپ؛ در لاگ حسابرسی/پاسخ‌های API و «لاگ تشخیصی فایل» هرگز
-      // ظاهر نمی‌شود.)
+      // The URL is always printed — even if opening the browser fails.
+      // (The only place the token is printed: the user's own console on their
+      // own machine — the desktop bootstrap delivery channel; it never
+      // appears in the audit log, API responses, or the file diagnostic log.)
       console.log(`[hem-agent] desktop UI: ${uiUrl}`);
       openDefaultBrowser(uiUrl);
     }
   });
 
-  // خطای گوش‌دادن (مثلاً EADDRINUSE: پورت اشغال است) — تا این نسخه به‌صورت
-  // unhandled می‌مرد و پنجره فوراً بسته می‌شد؛ حالا: پیام روشن + لاگ + exit≠0.
+  // Listen errors (e.g. EADDRINUSE: port already in use) — until this version
+  // they died as unhandled and the window closed instantly; now: clear
+  // message + log + exit≠0.
   server.on("error", (err: NodeJS.ErrnoException) => {
     const code = err.code ?? "LISTEN_ERROR";
     fatalExit(
       startupLog,
       code,
-      `گوش‌دادن به ${host}:${port} ممکن نشد — ${err.message}\n` +
+      `Listening on ${host}:${port} failed — ${err.message}\n` +
         (code === "EADDRINUSE"
-          ? "این پورت در حال استفادهٔ برنامهٔ دیگری است (شاید همین برنامه؟). پورت را با HEM_AGENT_PORT عوض کنید یا برنامهٔ اشغال‌کننده را ببندید."
-          : "آدرس/پورت را با HEM_AGENT_HOST/HEM_AGENT_PORT بررسی کنید."),
+          ? "The port is already used by another program (maybe this same app?). Change the port with HEM_AGENT_PORT or close the program holding it."
+          : "Check the address/port with HEM_AGENT_HOST/HEM_AGENT_PORT."),
       err,
     );
   });
@@ -287,7 +302,7 @@ async function main(): Promise<void> {
   process.on("SIGTERM", () => shutdown("SIGTERM"));
 }
 
-/** بازکردن مرورگر پیش‌فرض — بهترین تلاش؛ شکست غیرمهم (نشانی قبلاً چاپ شده است) */
+/** Open the default browser — best-effort; failure is unimportant (the URL was already printed) */
 function openDefaultBrowser(url: string): void {
   try {
     let child;
@@ -299,36 +314,36 @@ function openDefaultBrowser(url: string): void {
       child = spawn("xdg-open", [url], { detached: true, stdio: "ignore" });
     }
     child.on("error", (err: Error) => {
-      console.log(`[hem-agent] (مرورگر باز نشد — نشانی بالا را دستی در مرورگر باز کنید: ${err.message})`);
+      console.log(`[hem-agent] (could not open the browser — open the URL above manually: ${err.message})`);
     });
     child.unref();
   } catch (err) {
-    console.log(`[hem-agent] (مرورگر باز نشد — نشانی بالا را دستی در مرورگر باز کنید: ${String(err)})`);
+    console.log(`[hem-agent] (could not open the browser — open the URL above manually: ${String(err)})`);
   }
 }
 
-// --- راه‌اندازی با محافظ کامل: هر خطای راه‌اندازی → لاگ فایل + کنسول + exit≠0 --
+// --- Bootstrapped with full protection: any startup error → file log + console + exit≠0 --
 main().catch((err: unknown) => {
-  // اگر خود main با fatalExit خارج نشده بود (خطای غیرمنتظره در هر مرحله):
+  // If main itself did not exit via fatalExit (unexpected error at any stage):
   const message = err instanceof Error ? err.message : String(err);
-  console.error("[hem-agent] خطای غیرمنتظرهٔ راه‌اندازی:");
+  console.error("[hem-agent] unexpected startup error:");
   console.error(message);
   if (err instanceof Error && err.stack) console.error(err.stack);
-  // لاگ فایل — best-effort (ممکن است خودش در همان خطا افتاده باشد):
+  // File log — best-effort (it may itself have failed in the same incident):
   try {
     const home = agentHome();
     fs.mkdirSync(home, { recursive: true });
     const startupLog = createStartupLog(home, new Redactor());
     startupLog.fatal("STARTUP_UNEXPECTED", message, err);
-    console.error(`[hem-agent] جزئیات کامل: ${startupLog.logPath}`);
+    console.error(`[hem-agent] full details: ${startupLog.logPath}`);
     showFatalDialog("STARTUP_UNEXPECTED", startupLog.logPath);
   } catch {
-    /* لاگ نشد — کنسول بالاست */
+    /* could not log — console above is the witness */
   }
   process.exit(1);
 });
 
-// خطاهای دیرهنگام هم بی‌شاهد نمی‌مانند (defensive):
+// Late errors never die unwitnessed either (defensive):
 process.on("uncaughtException", (err: unknown) => {
   const message = err instanceof Error ? err.message : String(err);
   console.error("[hem-agent] uncaught exception:");

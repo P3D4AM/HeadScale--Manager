@@ -1,8 +1,8 @@
-// SessionManager — جریان اتصال دو مرحله‌ای TOFU (قرارداد §3):
-//   1) POST /api/connect → اگر کلید میزبان ناشناخته: fingerprint-required (پارک ۱۲۰ ثانیه، بدون احراز هویت)
-//   2) POST /api/connect/confirm → تکمیل handshake، ذخیرهٔ اثرانگشت، اتصال کامل
-//   مغایرت کلید میزبان → 409 HOSTKEY_CHANGED (بدون forget هیچ راه عبوری نیست)
-// + TTL پارک، keepalive، تشخیص sudo، و رویدادهای وضعیت.
+// SessionManager — two-step TOFU connect flow (contract §3):
+//   1) POST /api/connect → unknown host key: fingerprint-required (120s park, unauthenticated)
+//   2) POST /api/connect/confirm → complete handshake, store fingerprint, full connection
+//   Host key mismatch → 409 HOSTKEY_CHANGED (no way through without forget)
+// + park TTL, keepalive, sudo detection, and status events.
 
 import { randomUUID } from "node:crypto";
 import { readFileSync } from "node:fs";
@@ -37,7 +37,7 @@ interface ManagedSession {
   port: number;
   username: string;
   authMethod: "password" | "key";
-  /** فقط در حافظه — هرگز سریال‌سازی نمی‌شود */
+  /** Memory only — never serialized */
   passwordInMemory?: string;
   sudoMode?: SudoMode;
   profileId?: string;
@@ -46,7 +46,7 @@ interface ManagedSession {
   healthUrl?: string;
   logPath?: string;
   configPath?: string;
-  /** مسیر/نحوهٔ فراخوانی hsctl روی سرور ('hsctl' = PATH) */
+  /** How hsctl is invoked on the server (hsctl = on PATH) */
   hsctlPath?: string;
   createdAt: number;
   connectedAt?: number;
@@ -78,7 +78,7 @@ export class SessionManager {
     this.sweeper.unref?.();
   }
 
-  /** به‌روزرسانی callback وضعیت (توسط events.ts بعد از ساخت io نصب می‌شود) */
+  /** Status callback setter (installed by events.ts after io is created) */
   set onStatus(cb: SessionManagerDeps["onStatus"]) {
     this.deps.onStatus = cb;
   }
@@ -92,20 +92,20 @@ export class SessionManager {
     return s ? this.toInfo(s) : undefined;
   }
 
-  /** اجرای دستور خام روی نشست متصل */
+  /** Run a raw command on a connected session */
   async exec(sessionId: string, cmd: string, opts: ExecOptions = {}): Promise<ExecResult> {
     const s = this.requireConnected(sessionId);
     return s.ssh.exec(cmd, opts);
   }
 
-  /** اجرای دستور sudo روی نشست متصل */
+  /** Run a sudo command on a connected session */
   async execSudo(sessionId: string, cmd: string, opts: ExecOptions = {}): Promise<ExecResult> {
     const s = this.requireConnected(sessionId);
     const mode = s.sudoMode ?? (await this.refreshSudoMode(sessionId));
     return s.ssh.execSudo(cmd, mode, s.passwordInMemory, opts);
   }
 
-  /** تشخیص/بازتشخیص حالت sudo */
+  /** Detect/re-detect sudo mode */
   async refreshSudoMode(sessionId: string): Promise<SudoMode> {
     const s = this.requireConnected(sessionId);
     s.sudoMode = await detectSudoMode(s.ssh, {
@@ -116,27 +116,27 @@ export class SessionManager {
   }
 
   /**
-   * اتصال دو مرحله‌ای. در صورت موفقیت پاسخ 200؛ برای کلید ناشناخته پاسخ fingerprint-required؛
-   * مغایرت → پرتاب HemError HOSTKEY_CHANGED (409) با stored/presented.
+   * Two-step connect. 200 on success; fingerprint-required for an unknown key;
+   * mismatch → throws HemError HOSTKEY_CHANGED (409) with stored/presented.
    */
   async connect(req: ConnectRequest): Promise<ConnectResponse> {
     const target = await this.resolveCredentials(req);
 
-    // اگر sessionId داده شده، نشست قبلی با همان شناسه قطع می‌شود
+    // If sessionId is given, the previous session with that id is torn down
     if (req.sessionId) {
       const old = this.sessions.get(req.sessionId);
       if (old) this.teardown(old, "replaced");
     }
 
     const sessionId = req.sessionId ?? `s-${randomUUID().slice(0, 8)}`;
-    // مرجع شیء — تا CFA تایپ‌اسکریپت مقدار تعیین‌شده در کلوژر verify را نبیند اما معتبر بماند
+    // Boxed object — so TypeScript CFA does not discard the value assigned inside the verify closure while keeping it valid
     const mismatchRef: { v: { stored: KnownHostEntry; presented: HostKeyFingerprint } | null } = { v: null };
     const hostKey = `${target.host}:${target.port}`;
     const stored = this.knownHosts.get(target.host, target.port);
 
     const verify = (fp: HostKeyFingerprint): HostKeyVerdict => {
       if (!stored) {
-        // ناشناخته — مگر آنکه کاربر از قبل اثرانگشت را پذیرفته باشد
+        // Unknown — unless the user has already accepted the fingerprint
         return req.fingerprintAccept === true ? "accept" : "park";
       }
       if (stored.sha256 === fp.hash) return "accept";
@@ -174,7 +174,7 @@ export class SessionManager {
     };
     this.sessions.set(sessionId, session);
 
-    // پاک‌سازی در پس‌زمینه روی بسته‌شدن سوکت
+    // Background cleanup on socket close
     ssh.registerCloseHandler(() => {
       const s = this.sessions.get(sessionId);
       if (s && s.state === "connected") {
@@ -188,7 +188,7 @@ export class SessionManager {
           }
         }, 5_000).unref?.();
       } else if (s && s.state === "fingerprint-required") {
-        // سرور در حین پارک بسته شد
+        // Server closed while parked
         this.teardown(s, "server-closed-while-parked");
       }
     });
@@ -205,7 +205,7 @@ export class SessionManager {
     try {
       const outcome = await ssh.connect();
       if (outcome.kind === "connected") {
-        // فقط وقتی رخ می‌دهد که کلید از قبل شناخته بود یا fingerprintAccept صریح بود
+        // Only happens when the key was already known or fingerprintAccept was explicit
         if (!stored && req.fingerprintAccept === true) {
           this.knownHosts.set(target.host, target.port, {
             algo: ssh.presentedHostKey!.algo,
@@ -229,7 +229,7 @@ export class SessionManager {
           },
         };
       }
-      // fingerprint-required → پارک
+      // fingerprint-required → park
       session.state = "fingerprint-required";
       session.presentedFingerprint = outcome.fingerprint;
       session.parkedTimer = setTimeout(() => {
@@ -283,7 +283,7 @@ export class SessionManager {
     }
   }
 
-  /** تأیید/رد اثرانگشت نشست پارک‌شده */
+  /** Accept/reject the fingerprint of a parked session */
   async confirm(sessionId: string, accept: boolean): Promise<ConnectResponse> {
     const s = this.sessions.get(sessionId);
     if (!s) throw new HemError("NOT_FOUND", "نشست یافت نشد یا منقضی شده است.");
@@ -330,7 +330,7 @@ export class SessionManager {
     this.deps.audit.log({ sessionId, action: "disconnect", target: `${s.host}:${s.port}`, ok: true });
   }
 
-  /** بستن همهٔ نشست‌ها (خاموشی agent) */
+  /** Close all sessions (agent shutdown) */
   closeAll(): void {
     for (const s of [...this.sessions.values()]) this.teardown(s, "shutdown");
   }
@@ -340,7 +340,7 @@ export class SessionManager {
     this.closeAll();
   }
 
-  /** زمینهٔ اجرای headscale برای نشست (مصرف‌کننده: api/remote) */
+  /** headscale execution context for a session (consumers: api/remote) */
   hsContext(sessionId: string): {
     sessionId: string;
     ssh: SshSession;
@@ -384,12 +384,12 @@ export class SessionManager {
     return s as ManagedSession & { ssh: SshSession };
   }
 
-  /** فهرست کلیدهای میزبان شناخته‌شده (TOFU) */
+  /** List known host keys (TOFU) */
   knownHostsList(): Record<string, KnownHostEntry> {
     return this.knownHosts.list();
   }
 
-  /** فراموشی کلید میزبان — تنها راه عبور از HOSTKEY_CHANGED */
+  /** Forget a host key — the only way past HOSTKEY_CHANGED */
   forgetKnownHost(host: string, port: number): boolean {
     return this.knownHosts.forget(host, port);
   }
@@ -401,9 +401,9 @@ export class SessionManager {
     session.connectedAt = Date.now();
     session.presentedFingerprint = fingerprint ?? session.presentedFingerprint;
     session.banner = session.ssh.bannerText ?? undefined;
-    // ثبت اسرار برای پاک‌سازی دفاعی لاگ‌ها
+    // Register secrets for defensive log redaction
     this.deps.redactor.registerSecret(session.passwordInMemory);
-    // تشخیص sudo (غیر بحرانی)
+    // Detect sudo (non-critical)
     try {
       session.sudoMode = await detectSudoMode(session.ssh, {
         username: session.username,

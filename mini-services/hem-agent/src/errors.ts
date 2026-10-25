@@ -1,6 +1,6 @@
 import type { ErrorCode } from "./types";
 
-/** پیام‌های فارسی پیش‌فرض برای کدهای خطا */
+/** Default Persian messages for error codes (browser UI strings) */
 export const FA_MESSAGES: Record<ErrorCode, string> = {
   AUTH_FAILED: "احراز هویت ناموفق بود — رمز عبور یا کلید خصوصی نامعتبر است.",
   CONNECT_TIMEOUT: "اتصال به سرور در زمان مجاز برقرار نشد.",
@@ -27,7 +27,7 @@ export const FA_MESSAGES: Record<ErrorCode, string> = {
   INTERNAL: "خطای داخلی agent رخ داد.",
 };
 
-/** نگاشت کد خطا به وضعیت HTTP */
+/** Map error code to HTTP status */
 export function statusForCode(code: ErrorCode): number {
   switch (code) {
     case "AUTH_FAILED":
@@ -63,7 +63,7 @@ export function statusForCode(code: ErrorCode): number {
   }
 }
 
-/** خطای تایپ‌شدهٔ agent — همه‌جا فقط همین پرتاب می‌شود */
+/** The agent's typed error — the only error type thrown anywhere */
 export class HemError extends Error {
   readonly code: ErrorCode;
   readonly httpStatus: number;

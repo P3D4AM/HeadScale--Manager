@@ -1,56 +1,61 @@
 #!/usr/bin/env bash
 # ============================================================================
-# build-windows.sh — ساخت بستهٔ ویندوزی «مدیر آسان هداسکیل» (Headscale Easy Manager)
+# build-windows.sh — builds the Windows package of "Headscale Easy Manager"
 # ----------------------------------------------------------------------------
-# ورودی‌ها:
-#   HEM_VERSION (env, اختیاری) — پیش‌فرض: فیلد version در package.json.
-#   (UI_OUT حذف شد — v0.3.1 §1: UI «همیشه تازه» ساخته می‌شود؛ هیچ بازاستفادهٔ
-#    کشی از ui-out/ نیست و آن پوشه در پایان اجرا حذف می‌شود.)
+# Inputs:
+#   HEM_VERSION (env, optional) — default: the version field in package.json.
+#   (UI_OUT was removed — v0.3.1 §1: the UI is built "always fresh"; there is
+#    no cached reuse from ui-out/, and that folder is deleted at the end of
+#    the run.)
 #
-# خروجی‌ها (زیر packaging/dist/):
-#   hem-manager/                    محتوای پوشهٔ برنامهٔ ویندوزی:
-#     ├─ hem-manager.exe            باینری agent (bun --compile، cross-compile ویندوز)
-#     ├─ installer/                  مخزن نصب‌کننده — کنار exe باندل می‌شود (v0.3.1 §1)؛
-#     │                              بدون آن، ویزارد نصب با خطای واضح متوقف می‌شود.
-#     ├─ ui/                         رابط وب فارسی (استاتیک؛ exe آن را سرو می‌کند)
-#     ├─ README-WINDOWS-FA.txt       راهنمای سریع فارسی
-#     ├─ install.ps1                 نصب (LOCALAPPDATA + میانبرها، بدون Administrator)
-#     └─ uninstall.ps1               حذف
-#   linux-verify/hem-manager         باینری لینوکس همان سورس — «واقعاً اجرا» و
-#                                    راستی‌آزمایی می‌شود (پایین)؛ دلیل: exe ویندوزی
-#                                    در این لینوکس‌باکس اجرا نمی‌شود؛ باینری لینوکسی
-#                                    از «همان سورس» کامپایل شده و زنده آزموده می‌شود
-#                                    (صادقانه: این جایگزینِ آزمون روی خودِ ویندوز نیست).
-#                                    چیدمان packaged (installer/ کنار باینری) هم برای
-#                                    آن تکرار و بررسی می‌شود.
+# Outputs (under packaging/dist/):
+#   hem-manager/                    contents of the Windows app folder:
+#     ├─ hem-manager.exe            agent binary (bun --compile, Windows cross-compile)
+#     ├─ installer/                  installer repo — bundled next to the exe (v0.3.1 §1);
+#     │                              without it, the install wizard stops with a clear error.
+#     ├─ ui/                         Persian web UI (static; the exe serves it)
+#     ├─ README-WINDOWS-FA.txt       quick-start guide (Persian)
+#     ├─ install.ps1                 install (LOCALAPPDATA + shortcuts, no Administrator)
+#     └─ uninstall.ps1               uninstall
+#   linux-verify/hem-manager         Linux binary from the same source — "actually
+#                                    run" and verified (below); reason: the Windows
+#                                    exe cannot run on this Linux box; the Linux
+#                                    binary is compiled from "the same source" and
+#                                    tested live (honestly: this is not a substitute
+#                                    for testing on Windows itself). The packaged
+#                                    layout (installer/ next to the binary) is also
+#                                    replicated and checked for it.
 #   HeadscaleEasyManager-v<VER>-win64.zip (+ .sha256)
 #
-# راستی‌آزمایی زندهٔ باینری لینوکسی (هر بار اجرای اسکریپت):
-#   ۱) /?token=… → Set-Cookie hem_token + index.html (نشانگر فارسی) — no-store
-#   ۲) assetها با mime درست (svg/css/js) + fallback SPA برای مسیر ناشناخته
-#   ۳) /api/health با کوکی (بدون هدر) → 200؛ بدون توکن → 401
-#   ۴) اتصال SSH واقعی به سرور آزمایشی 127.0.0.1:2222 (کاربر z / رمز hemtest-pass):
-#      جریان کامل TOFU (fingerprint-required → confirm → connected) + exec واقعی
-#      (console allowlist: df -h) + probe واقعی — یعنی ssh2ِ داخل باینری کامپایل‌شده کار می‌کند.
+# Live verification of the Linux binary (on every run of the script):
+#   1) /?token=… → Set-Cookie hem_token + index.html (Persian markers) — no-store
+#   2) assets with the correct MIME types (svg/css/js) + SPA fallback for unknown paths
+#   3) /api/health with cookie (no header) → 200; without a token → 401
+#   4) real SSH connection to the test server 127.0.0.1:2222 (user z / password
+#      hemtest-pass): full TOFU flow (fingerprint-required → confirm → connected)
+#      + real exec (console allowlist: df -h) + real probe — i.e. the ssh2 inside
+#      the compiled binary works.
 #
-# یادداشت‌های فنی (انحراف‌های موجه):
-#   • UI همیشه تازه در /tmp ساخته می‌شود (v0.3.1 §1) — خروجی build مستقیم وارد
-#     $STAGE/ui می‌شود؛ پوشهٔ کهنهٔ ui-out/ (کش؛ در گیت ignore است) در پایان
-#     اجرا حذف می‌شود.
-#   • node_modules با «hardlink» (cp -al) به کپی /tmp وصل می‌شود نه symlink —
-#     Turbopack سیم‌لینک به بیرون از ریشهٔ build را رد می‌کند (خطای واقعی).
-#   • پچ‌های درون‌کپی UI حذف شدند (v0.3.1): next.config.ts واقعی output:"export"
-#     دارد و src/app/api دیگر وجود ندارد — مسیر 7-a کامل فرود کرده است.
-#   • installer/ عین «درخت کامیت‌شده» است (git archive HEAD:headscale-easy-manager،
-#     همان روش release.sh پس از fold v0.3.1) — نه فایل‌های ردیابی‌نشده/کش؛
-#     هیچ مسیر توسعه‌دهنده‌ای روی ماشین کاربر فرض نمی‌شود.
-#   • packaging/dist در گیت ignore است — خروجی ساخت است، نه سورس.
+# Technical notes (justified deviations):
+#   • The always-fresh UI is built in /tmp (v0.3.1 §1) — the build output goes
+#     straight into $STAGE/ui; the stale ui-out/ folder (a cache; git-ignored)
+#     is deleted at the end of the run.
+#   • node_modules is attached to the /tmp copy via hardlinks (cp -al), not
+#     symlinks — Turbopack rejects symlinks pointing outside the build root
+#     (a real error we hit).
+#   • The in-copy UI patches were removed (v0.3.1): the real next.config.ts has
+#     output:"export" and src/app/api no longer exists — path 7-a fully landed.
+#   • installer/ is exactly the "committed tree" (git archive
+#     HEAD:headscale-easy-manager, the same method as release.sh after the
+#     v0.3.1 fold) — not untracked/cached files; no developer paths are
+#     assumed on the user's machine.
+#   • packaging/dist is git-ignored — it is build output, not source.
 # ============================================================================
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 AGENT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"                       # mini-services/hem-agent
-OUTER_DIR="$(cd "$AGENT_DIR/../.." && pwd)"                     # ریشهٔ پروژهٔ بیرونی (Next.js app)
+OUTER_DIR="$(cd "$AGENT_DIR/../.." && pwd)"                     # root of the outer project (Next.js app)
 VERSION="${HEM_VERSION:-$(grep -m1 '"version"' "$AGENT_DIR/package.json" | sed -E 's/.*"version": *"([^"]+)".*/\1/')}"
 DIST="$SCRIPT_DIR/dist"
 STAGE="$DIST/hem-manager"
@@ -60,111 +65,112 @@ ZIP="$DIST/$ZIP_NAME"
 HEM_UI_PORT=3015
 
 log()  { printf '\033[1;36m[build-windows]\033[0m %s\n' "$*"; }
-fail() { printf '\033[1;31m[build-windows] خطا:\033[0m %s\n' "$*" >&2; exit 1; }
+fail() { printf '\033[1;31m[build-windows] error:\033[0m %s\n' "$*" >&2; exit 1; }
 
-[ -f "$AGENT_DIR/index.ts" ] || fail "index.ts در $AGENT_DIR پیدا نشد."
-[ -d "$OUTER_DIR/src/app" ]  || fail "پروژهٔ بیرونی (Next.js) در $OUTER_DIR پیدا نشد."
-# --- پیش‌شرط‌های installer/ (v0.3.1 §1) — پیش از هر کاری ---------------------
-command -v git >/dev/null 2>&1 || fail "git روی PATH نیست — ساخت installer/ به git archive نیاز دارد."
-command -v python3 >/dev/null 2>&1 || fail "python3 روی PATH نیست — نگهبان بایت‌های فایل‌های متنی ویندوزی (BOM/CRLF) به آن نیاز دارد."
-[ -d "$OUTER_DIR/.git" ] || fail "$OUTER_DIR مخزن گیت نیست — installer/ فقط از درخت کامیت‌شدهٔ همان گیت ساخته می‌شود (هیچ مسیر توسعه‌دهنده‌ای فرض نمی‌شود)."
-[ ! -e "$OUTER_DIR/headscale-easy-manager/.git" ] || fail "مخزن تو در تو — fold v0.3.1 انجام نشده (headscale-easy-manager/.git موجود است)."
-[ -f "$OUTER_DIR/headscale-easy-manager/install.sh" ] || fail "install.sh در درخت کاری headscale-easy-manager نیست — درخت کامیت‌شده (HEAD) باید مخزن پایتون را داشته باشد (fold v0.3.1)."
-[ -f "$SCRIPT_DIR/templates/install.ps1" ]        || fail "قالب templates/install.ps1 موجود نیست."
-[ -f "$SCRIPT_DIR/templates/uninstall.ps1" ]      || fail "قالب templates/uninstall.ps1 موجود نیست."
-[ -f "$SCRIPT_DIR/templates/README-WINDOWS-FA.txt" ] || fail "قالب templates/README-WINDOWS-FA.txt موجود نیست."
-log "نسخه: $VERSION | agent: $AGENT_DIR | پروژهٔ بیرونی: $OUTER_DIR"
+[ -f "$AGENT_DIR/index.ts" ] || fail "index.ts not found in $AGENT_DIR."
+[ -d "$OUTER_DIR/src/app" ]  || fail "outer project (Next.js) not found in $OUTER_DIR."
+# --- installer/ preconditions (v0.3.1 §1) — before anything else -------------
+command -v git >/dev/null 2>&1 || fail "git is not on PATH — building installer/ requires git archive."
+command -v python3 >/dev/null 2>&1 || fail "python3 is not on PATH — the Windows text-file byte guard (BOM/CRLF) requires it."
+[ -d "$OUTER_DIR/.git" ] || fail "$OUTER_DIR is not a git repository — installer/ is built only from that repo's committed tree (no developer paths are assumed)."
+[ ! -e "$OUTER_DIR/headscale-easy-manager/.git" ] || fail "nested repository — the v0.3.1 fold was not done (headscale-easy-manager/.git exists)."
+[ -f "$OUTER_DIR/headscale-easy-manager/install.sh" ] || fail "install.sh is not in the headscale-easy-manager working tree — the committed tree (HEAD) must contain the Python repo (fold v0.3.1)."
+[ -f "$SCRIPT_DIR/templates/install.ps1" ]        || fail "template templates/install.ps1 is missing."
+[ -f "$SCRIPT_DIR/templates/uninstall.ps1" ]      || fail "template templates/uninstall.ps1 is missing."
+[ -f "$SCRIPT_DIR/templates/README-WINDOWS-FA.txt" ] || fail "template templates/README-WINDOWS-FA.txt is missing."
+log "version: $VERSION | agent: $AGENT_DIR | outer project: $OUTER_DIR"
 
 # ----------------------------------------------------------------------------
-# نگهبان فایل‌های متنی ویندوزی (v0.3.2-beta.2 — ریشه‌یابی باگ Parser نصب‌کننده)
+# Guard for Windows text files (v0.3.2-beta.2 — root-cause fix of the installer Parser bug)
 # ----------------------------------------------------------------------------
-# باگ: تا v0.3.2-beta.1 این فایل‌ها با heredocِ بش نوشته می‌شدند: «UTF-8 بدون
-# BOM» + «LF تنها». Windows PowerShell 5.1 فایلِ بدون BOM را با کدپیج ANSI
-# می‌خواند (CP1256/CP1252) → متن فارسی خراب می‌شود و بدتر: بعضی بایت‌های
-# UTF-8 فارسی در کدپیج ANSI به «نویسه‌های نقل‌قولی یونی‌کد» ترجمه می‌شوند
-# (ق → ‚ ؛ — → ”) که Parser خودشان را جداکنندهٔ رشته می‌شناسد →
-# «Unexpected token ')'» و «string missing terminator» در install.ps1.
-# قرارداد قطعی: BOMِ UTF-8 + فقط CRLF + بدون «کوتیشن‌های هوشمند» U+2018..U+201D.
-# این نگهبان «منبع واحد» است — هر فایل خروجیِ ویندوزی باید از آن بگذرد؛
-# اگر کسی روزی قالب را با ادیتوری اشتباه ذخیره کرد، ساخت همین‌جا و با صدای
-# بلند متوقف می‌شود (اصلاحِ سیستماتیک، نه اصلاحِ یک‌باره).
+# Bug: up to v0.3.2-beta.1 these files were written with a bash heredoc:
+# "UTF-8 without BOM" + "LF only". Windows PowerShell 5.1 reads a BOM-less
+# file with the ANSI code page (CP1256/CP1252) → Persian text gets mangled,
+# and worse: some Persian UTF-8 bytes are translated by the ANSI code page
+# into "Unicode quotation characters" (a Persian letter → ‚ ; — → ”) which the
+# Parser itself then treats as string delimiters → "Unexpected token ')'"
+# and "string missing terminator" in install.ps1.
+# Hard contract: UTF-8 BOM + CRLF only + no "smart quotes" U+2018..U+201D.
+# This guard is the "single source" — every Windows output file must pass it;
+# if someone ever saves a template with the wrong editor, the build stops
+# right here, loudly (a systematic fix, not a one-off patch).
 # ----------------------------------------------------------------------------
 guard_windows_text() {
   python3 - "$@" <<'PYGUARD'
 import sys
 BOM = b"\xef\xbb\xbf"
-QUOTES = set(range(0x2018, 0x201F))  # ‘ ’ ‚ ‛ “ ” „ — هرگز نباید باشند (همه با Parser واقعی PowerShell آزموده شدند؛ U+201F و « » بی‌خطرند)
+QUOTES = set(range(0x2018, 0x201F))  # ‘ ’ ‚ ‛ “ ” „ — must never be present (all tested with the real PowerShell parser; U+201F and « » are safe)
 ok = True
 for p in sys.argv[1:]:
     try:
         data = open(p, "rb").read()
     except OSError as e:
-        print(f"GUARD FAIL {p}: خواندن ممکن نیست — {e}")
+        print(f"GUARD FAIL {p}: cannot read — {e}")
         ok = False
         continue
     why = []
     if not data.startswith(BOM):
-        why.append("BOMِ UTF-8 ندارد (PowerShell 5.1 آن را با کدپیج ANSI می‌خواند)")
+        why.append("missing UTF-8 BOM (Windows PowerShell 5.1 reads it with the ANSI code page)")
     body = data[3:] if data.startswith(BOM) else data
     stripped = body.replace(b"\r\n", b"")
     if b"\n" in stripped:
-        why.append("LFِ بدون CR دارد (فقط CRLF مجاز است)")
+        why.append("has LF without CR (only CRLF is allowed)")
     if b"\r" in stripped:
-        why.append("CRِ تنها دارد (فقط CRLF مجاز است)")
+        why.append("has a lone CR (only CRLF is allowed)")
     if not body.strip():
-        why.append("خالی است")
+        why.append("is empty")
     try:
         text = body.decode("utf-8")
     except UnicodeDecodeError:
-        why.append("UTF-8 معتبر نیست")
+        why.append("is not valid UTF-8")
         text = ""
     if any(ord(c) in QUOTES for c in text):
-        why.append("حاوی نویسهٔ نقل‌قولیِ یونی‌کد (U+2018..U+201E) است — Parser PowerShell جداکنندهٔ رشته می‌شناسدشان")
+        why.append("contains Unicode quotation marks (U+2018..U+201E) — the PowerShell parser treats them as string delimiters")
     if why:
-        print(f"GUARD FAIL {p}: " + "؛ ".join(why))
+        print(f"GUARD FAIL {p}: " + "; ".join(why))
         ok = False
 if not ok:
     sys.exit(1)
-print("GUARD OK — BOM + CRLF + بدون کوتیشن هوشمند")
+print("GUARD OK — BOM + CRLF + no smart quotes")
 PYGUARD
 }
 
-# بررسی نحوی با Parser خود PowerShell — اگر pwsh در دسترس بود (اختیاری/صادقانه)
+# Syntax check with PowerShell's own Parser — when pwsh is available (optional/honest)
 parse_ps1_guard() {
   if command -v pwsh >/dev/null 2>&1; then
-    log "بررسی نحوی install.ps1/uninstall.ps1 با Parser خود PowerShell …"
+    log "Syntax-checking install.ps1/uninstall.ps1 with PowerShell's own Parser …"
     for f in "$@"; do
       PS1FILE="$f" pwsh -NoProfile -Command '
         $errs = $null; $tok = $null
         $null = [System.Management.Automation.Language.Parser]::ParseFile($env:PS1FILE, [ref]$tok, [ref]$errs)
         if ($errs.Count -gt 0) { $errs | ForEach-Object { Write-Output $_.Message }; exit 1 }
         Write-Output "PARSE OK: $env:PS1FILE"
-      ' || fail "Parser PowerShell برای $f خطا داد (بالا)."
+      ' || fail "PowerShell Parser reported errors for $f (see above)."
     done
   else
-    log "صادقانه: pwsh در دسترس نیست — بررسی Parser در «همین ساخت» انجام نشد؛ در CI ویندوزی با Windows PowerShell 5.1 واقعی انجام می‌شود."
+    log "Honest note: pwsh is not available — the Parser check did not run in this build; it runs in Windows CI with real Windows PowerShell 5.1."
   fi
 }
 
 # ----------------------------------------------------------------------------
-# ۰) در صورت فرود مسیر 7-a: تولید مستندات build-time (امروز اختیاری/بی‌اثر)
+# 0) If path 7-a has landed: build-time docs generation (today optional/inert)
 # ----------------------------------------------------------------------------
 if grep -q '"docs:generate"' "$OUTER_DIR/package.json" 2>/dev/null; then
-  log "scripts/generate-docs.ts فرود کرده — اجرای bun run docs:generate (مسیر 7-a)"
-  (cd "$OUTER_DIR" && bun run docs:generate) || fail "docs:generate شکست خورد."
+  log "scripts/generate-docs.ts has landed — running bun run docs:generate (path 7-a)"
+  (cd "$OUTER_DIR" && bun run docs:generate) || fail "docs:generate failed."
 else
-  log "docs:generate هنوز فرود نکرده (مسیر 7-a) — فصل‌ها در زمان build از docs/fa خوانده می‌شوند."
+  log "docs:generate has not landed yet (path 7-a) — chapters are read from docs/fa at build time."
 fi
 
 # ----------------------------------------------------------------------------
-# ۱) UI استاتیک — «همیشه تازه» در /tmp (v0.3.1 §1؛ بازاستفادهٔ کش وجود ندارد)
+# 1) Static UI — "always fresh" in /tmp (v0.3.1 §1; no cache reuse)
 # ----------------------------------------------------------------------------
-UI_SRC=""   # <work>/out — خروجی تازهٔ همین اجرا؛ مستقیم وارد $STAGE/ui می‌شود
-UI_WORK=""  # کپی موقت build؛ پس از استیج حذف می‌شود
+UI_SRC=""   # <work>/out — this run's fresh output; goes straight into $STAGE/ui
+UI_WORK=""  # temporary build copy; deleted after staging
 
 build_ui() {
   local work="/tmp/hem-ui-build-$(date +%s)-$$"
-  log "ساخت تازهٔ UI استاتیک در $work (هر اجرا — بدون بازاستفادهٔ خروجی قبلی) …"
+  log "Building a fresh static UI in $work (every run — no reuse of previous output) …"
   mkdir -p "$work"
   tar -C "$OUTER_DIR" -cf - \
     --exclude=node_modules --exclude=.next --exclude=.git \
@@ -173,100 +179,103 @@ build_ui() {
     --exclude=headscale-easy-manager \
     . | tar -C "$work" -xf -
 
-  # node_modules با hardlink (Turbopack symlink به بیرون از ریشهٔ build را رد می‌کند)
+  # node_modules via hardlinks (Turbopack rejects symlinks pointing outside the build root)
   if ! cp -al "$OUTER_DIR/node_modules" "$work/node_modules" 2>/dev/null; then
-    log "hardlink ممکن نشد — کپی کامل node_modules (کندتر)"
+    log "hardlinking failed — full copy of node_modules (slower)"
     cp -a "$OUTER_DIR/node_modules" "$work/node_modules"
   fi
 
-  (cd "$work" && bunx next build) || fail "next build شکست خورد."
-  [ -f "$work/out/index.html" ] || fail "out/index.html ساخته نشد."
+  (cd "$work" && bunx next build) || fail "next build failed."
+  [ -f "$work/out/index.html" ] || fail "out/index.html was not built."
   UI_SRC="$work/out"
   UI_WORK="$work"
-  log "UI تازه ساخته شد: $UI_SRC ($(du -sh "$UI_SRC" | cut -f1))"
+  log "fresh UI built: $UI_SRC ($(du -sh "$UI_SRC" | cut -f1))"
 }
 
 build_ui
 
 # ----------------------------------------------------------------------------
-# ۲) استیج پوشهٔ برنامهٔ ویندوزی
+# 2) Stage the Windows app folder
 # ----------------------------------------------------------------------------
-log "استیج $STAGE …"
+log "Staging $STAGE …"
 rm -rf "$STAGE"
 mkdir -p "$STAGE/ui"
 cp -a "$UI_SRC/." "$STAGE/ui/"
 rm -rf "$UI_WORK"; UI_WORK=""; UI_SRC=""
-log "کپی موقت build UI پاک شد (خروجی تازه وارد $STAGE/ui شد)."
+log "Temporary UI build copy removed (fresh output went into $STAGE/ui)."
 
-# installer/ — مخزن نصب‌کننده، باندل‌شده کنار exe (v0.3.1 §1). منبع: «درخت
-# کامیت‌شدهٔ» گیت بیرونی (git archive) — همان روش release.sh پس از fold.
-# بستهٔ ویندوزی بدون نصب‌کننده هرگز ساخته نمی‌شود.
-log "بسته‌بندی installer/ از درخت کامیت‌شده (git archive HEAD:headscale-easy-manager) …"
+# installer/ — the installer repo, bundled next to the exe (v0.3.1 §1). Source:
+# the outer git repo's "committed tree" (git archive) — same method as
+# release.sh after the fold. A Windows package without an installer is never built.
+log "Packaging installer/ from the committed tree (git archive HEAD:headscale-easy-manager) …"
 mkdir -p "$STAGE/installer"
 if ! git -C "$OUTER_DIR" archive HEAD:headscale-easy-manager | tar -x -C "$STAGE/installer"; then
-  fail "git archive HEAD:headscale-easy-manager ناموفق بود — installer/ از درخت کامیت‌شده ساخته نشد."
+  fail "git archive HEAD:headscale-easy-manager failed — installer/ was not created from the committed tree."
 fi
-[ -f "$STAGE/installer/install.sh" ] || fail "installer/ در بستهٔ ویندوزی ساخته نشد — بستهٔ بدون نصب‌کننده هرگز ساخته نمی‌شود."
+[ -f "$STAGE/installer/install.sh" ] || fail "installer/ was not created in the Windows package — a package without an installer is never built."
 
-log "کامپایل exe ویندوزی (bun --compile --target=bun-windows-x64) …"
+log "Compiling the Windows exe (bun --compile --target=bun-windows-x64) …"
 bun build --compile --target=bun-windows-x64 "$AGENT_DIR/index.ts" \
-  --outfile "$STAGE/hem-manager.exe" >/dev/null || fail "کامپایل exe ویندوزی شکست خورد."
-[ -f "$STAGE/hem-manager.exe" ] || fail "hem-manager.exe ساخته نشد."
+  --outfile "$STAGE/hem-manager.exe" >/dev/null || fail "Windows exe compile failed."
+[ -f "$STAGE/hem-manager.exe" ] || fail "hem-manager.exe was not built."
 
 # ----------------------------------------------------------------------------
-# ۲-ب) فایل‌های متنی ویندوزی — از «قالب‌های ردیابی‌شده» (v0.3.2-beta.2)
+# 2-b) Windows text files — from "tracked templates" (v0.3.2-beta.2)
 # ----------------------------------------------------------------------------
-# منبع واحد: packaging/templates/ — در گیت ردیابی می‌شوند و قرارداد بایت‌هایشان
-# (UTF-8 BOM + فقط CRLF + بدون کوتیشن هوشمند) با guard_windows_text قفل شده.
-# ریشه‌یابی باگ v0.3.2-beta.1: heredocِ بش «UTF-8 بدون BOM» + «LF» می‌نوشت؛
-# Windows PowerShell 5.1 آن را با کدپیج ANSI می‌خواند و باگ Parser می‌داد.
+# Single source: packaging/templates/ — tracked in git, with their byte
+# contract (UTF-8 BOM + CRLF only + no smart quotes) enforced by
+# guard_windows_text.
+# Root cause of the v0.3.2-beta.1 bug: a bash heredoc wrote "UTF-8 without
+# BOM" + "LF"; Windows PowerShell 5.1 read it with the ANSI code page and hit
+# the Parser bug.
 # ----------------------------------------------------------------------------
-log "استیج فایل‌های متنی ویندوز از قالب‌ها (install.ps1 / uninstall.ps1 / README) …"
+log "Staging Windows text files from templates (install.ps1 / uninstall.ps1 / README) …"
 cp "$SCRIPT_DIR/templates/install.ps1"   "$STAGE/install.ps1"
 cp "$SCRIPT_DIR/templates/uninstall.ps1" "$STAGE/uninstall.ps1"
-# @VERSION@ → $VERSION — فقط این یک جایگزینی؛ بایت‌های دیگر دست نمی‌خورند.
-# (نسخه‌ها هرگز & یا \ ندارند؛ اگر روزی داشتند، اینجا باید escape شود.)
+# @VERSION@ → $VERSION — this is the only substitution; every other byte is untouched.
+# (Versions never contain & or \; if they ever do, escaping must be added here.)
 sed "s/@VERSION@/$VERSION/g" "$SCRIPT_DIR/templates/README-WINDOWS-FA.txt" > "$STAGE/README-WINDOWS-FA.txt"
-# نگهبان بایت‌ها — هم قالب‌ها هم خروجی‌ها
+# Byte guard — both templates and outputs
 guard_windows_text "$SCRIPT_DIR/templates/install.ps1" "$SCRIPT_DIR/templates/uninstall.ps1" \
   "$STAGE/install.ps1" "$STAGE/uninstall.ps1" "$STAGE/README-WINDOWS-FA.txt" \
-  || fail "نگهبان فایل‌های متنی ویندوزی رد شد — قرارداد: UTF-8 BOM + فقط CRLF + بدون U+2018..U+201D (templates را بازبینی کنید)."
+  || fail "Windows text-file guard rejected the files — contract: UTF-8 BOM + CRLF only + no U+2018..U+201D (review the templates)."
 if grep -q "@VERSION@" "$STAGE/README-WINDOWS-FA.txt"; then
-  fail "README خروجی هنوز @VERSION@ دارد — جایگزینی نسخه انجام نشد."
+  fail "output README still contains @VERSION@ — the version substitution did not happen."
 fi
-grep -q "نسخهٔ $VERSION" "$STAGE/README-WINDOWS-FA.txt" || fail "README خروجی «نسخهٔ $VERSION» را ندارد."
+grep -q "نسخهٔ $VERSION" "$STAGE/README-WINDOWS-FA.txt" || fail "output README lacks the Persian version marker for $VERSION."
 parse_ps1_guard "$STAGE/install.ps1" "$STAGE/uninstall.ps1"
 
 # ----------------------------------------------------------------------------
-# ۳) باینری لینوکسی همان سورس + راستی‌آزمایی زندهٔ کامل
+# 3) Linux binary from the same source + full live verification
 # ----------------------------------------------------------------------------
-log "کامپایل باینری لینوکسی برای راستی‌آزمایی زنده …"
+log "Compiling the Linux binary for live verification …"
 rm -rf "$LINUX_DIR"
 mkdir -p "$LINUX_DIR"
 cp -a "$STAGE/ui" "$LINUX_DIR/ui"
 bun build --compile --target=bun-linux-x64 "$AGENT_DIR/index.ts" \
-  --outfile "$LINUX_DIR/hem-manager" >/dev/null || fail "کامپایل باینری لینوکسی شکست خورد."
+  --outfile "$LINUX_DIR/hem-manager" >/dev/null || fail "Linux binary compile failed."
 chmod +x "$LINUX_DIR/hem-manager"
 
-# چیدمان packaged برای باینری لینوکسی هم تکرار می‌شود (v0.3.1 §1) — زنجیرهٔ
-# حلٔ config.ts باید همین‌جا installer/ را پیدا کند، مثل exe ویندوزی روی ویندوز.
+# The packaged layout is replicated for the Linux binary too (v0.3.1 §1) —
+# config.ts's resolution chain must find installer/ right here, like the
+# Windows exe on Windows.
 cp -a "$STAGE/installer" "$LINUX_DIR/installer"
-[ -f "$LINUX_DIR/installer/install.sh" ] || fail "installer/ کنار باینری لینوکسی ساخته نشد (packaged layout)."
+[ -f "$LINUX_DIR/installer/install.sh" ] || fail "installer/ was not created next to the Linux binary (packaged layout)."
 
-# سرور SSH آزمایشی باید روشن باشد (127.0.0.1:2222) — اگر نبود، روشنش کن
+# The test SSH server must be up (127.0.0.1:2222) — if not, start it
 started_demo=0
 if ! (ss -tulpn 2>/dev/null | grep -q '127.0.0.1:2222'); then
-  log "سرور SSH آزمایشی روشن نیست — راه‌اندازی …"
+  log "test SSH server is not up — starting it …"
   (cd "$AGENT_DIR" && setsid bun run test/server.ts >> test-server.log 2>&1 &)
   for i in $(seq 1 40); do (ss -tulpn 2>/dev/null | grep -q '127.0.0.1:2222') && break; sleep 0.25; done
   started_demo=1
 fi
-(ss -tulpn 2>/dev/null | grep -q '127.0.0.1:2222') || fail "سرور SSH آزمایشی 2222 بالا نیامد."
+(ss -tulpn 2>/dev/null | grep -q '127.0.0.1:2222') || fail "test SSH server on port 2222 did not come up."
 
 VERIFY_HOME="$LINUX_DIR/verify-home"
 VERIFY_LOG="$LINUX_DIR/verify.log"
 rm -rf "$VERIFY_HOME"
-log "اجرای باینری لینوکسی روی پورت $HEM_UI_PORT (HEM_DESKTOP=1، home تازه) …"
+log "Running the Linux binary on port $HEM_UI_PORT (HEM_DESKTOP=1, fresh home) …"
 HEM_AGENT_PORT=$HEM_UI_PORT HEM_DESKTOP=1 HEM_AGENT_HOME="$VERIFY_HOME" \
   "$LINUX_DIR/hem-manager" > "$VERIFY_LOG" 2>&1 &
 BIN_PID=$!
@@ -283,24 +292,26 @@ for i in $(seq 1 60); do
 done
 
 TOKEN="$(grep -oE 'token=[0-9a-f]+' "$VERIFY_LOG" | head -1 | cut -d= -f2)"
-[ -n "$TOKEN" ] || { cat "$VERIFY_LOG" >&2; fail "توکن دسکتاپ در لاگ پیدا نشد."; }
-log "توکن دسکتاپ استخراج شد: ${TOKEN:0:8}… (کامل در verify.log)"
+[ -n "$TOKEN" ] || { cat "$VERIFY_LOG" >&2; fail "desktop token not found in the log."; }
+log "desktop token extracted: ${TOKEN:0:8}… (full value in verify.log)"
 
 errors=0
-chk() { # chk <شرح> <کد موفقیت 0/1>
-  if [ "$2" = 0 ]; then log "  [OK]   $1"; else log "  [شکست] $1"; errors=$((errors+1)); fi
+chk() { # chk <description> <success code 0/1>
+  if [ "$2" = 0 ]; then log "  [OK]   $1"; else log "  [FAIL] $1"; errors=$((errors+1)); fi
 }
 
-# --- ۰) چیدمان packaged: installer/ کنار باینری (پیش‌شرط resolution v0.3.1 §1)
+# --- 0) Packaged layout: installer/ next to the binary (resolution precondition, v0.3.1 §1)
 r=0; [ -f "$LINUX_DIR/installer/install.sh" ] || r=1
-chk "installer/ کنار باینری لینوکسی (packaged layout)" $r
+chk "installer/ next to the Linux binary (packaged layout)" $r
 
-# --- ۰-ب) اجرای «خالی» باینری (بدون هیچ متغیر HEM_*) — رگرسیون باگ
-#     «بسته‌شدن سریع EXE» (v0.3.2-beta.2): روی لینوکس همین مسیرِ قفلِ
-#     fail-closed زنده آزموده می‌شود: exit≠0 + پیام فارسی AUTH_NOT_CONFIGURED
-#     + «لاگ فایلِ تشخیصی» با رکورد fatal (نبودِش یعنی خطا بی‌شاهد می‌مرد).
-#     روی ویندوزِ بسته، همین اجرا به «قاعدهٔ دسکتاپ» می‌افتد (src/config.ts)
-#     و بالا می‌آید — آن مسیر فقط روی ویندوز واقعی/CI ویندوزی آزموده می‌شود.
+# --- 0-b) "bare" run of the binary (without any HEM_* variables) — regression
+#     test for the "EXE closes instantly" bug (v0.3.2-beta.2): on Linux this
+#     exercises the locked fail-closed path live: exit≠0 + the Persian
+#     AUTH_NOT_CONFIGURED message + a "diagnostic log file" with a fatal
+#     record (its absence would mean the error died unwitnessed). On the
+#     packaged Windows build, this same run falls into the "desktop rule"
+#     (src/config.ts) and starts up — that path can only be tested on real
+#     Windows / Windows CI.
 BARE_HOME="$LINUX_DIR/bare-home"
 rm -rf "$BARE_HOME"
 set +e
@@ -311,7 +322,7 @@ set -e
 r=0
 [ "$BARE_RC" -gt 0 ] && [ "$BARE_RC" -ne 124 ] || r=1
 echo "$BARE_OUT" | grep -q "AUTH_NOT_CONFIGURED" || r=1
-echo "$BARE_OUT" | grep -q "شروع نمی‌شود" || r=1
+echo "$BARE_OUT" | grep -q "refuses to start" || r=1
 [ -f "$BARE_HOME/logs/hem-agent.log" ] || r=1
 if [ -f "$BARE_HOME/logs/hem-agent.log" ]; then
   grep -q '"code":"AUTH_NOT_CONFIGURED"' "$BARE_HOME/logs/hem-agent.log" || r=1
@@ -320,102 +331,105 @@ fi
 if [ "$r" -ne 0 ]; then
   printf '%s\n' "$BARE_OUT" | sed 's/^/  [bare] /' >&2
 fi
-chk "اجرای خالی باینری: exit≠0 + AUTH_NOT_CONFIGURED + لاگ فایل تشخیصی (رگرسیون EXE)" $r
+chk "bare binary run: exit≠0 + AUTH_NOT_CONFIGURED + diagnostic log file (EXE regression)" $r
 
-# --- ۱) /?token= → 303 + Set-Cookie جلسه‌ای + (پس از ریدایرکت) index.html فارسی
-#     قرارداد v0.3.1 §4: تبادل یک‌بارمصرف — کوکی جلسه‌ای (بدون Max-Age) و
-#     303 به همان مسیر بدون token؛ بازیابی لینک قدیمی دیگر کوکی نمی‌سازد.
+# --- 1) /?token= → 303 + session Set-Cookie + (after the redirect) Persian index.html
+#     Contract v0.3.1 §4: one-time exchange — a session cookie (no Max-Age) and
+#     a 303 to the same path without the token; replaying an old link no
+#     longer creates a cookie.
 head_root="$(mktemp)"; head_hdr="$(mktemp)"
 code="$(curl -s -L -o "$head_root" -D "$head_hdr" "http://127.0.0.1:$HEM_UI_PORT/?token=$TOKEN" -w '%{http_code}')"
 r=0; grep -qi '^set-cookie: *hem_token=' "$head_hdr" || r=1
 grep -qi '^set-cookie: *hem_token=.*max-age' "$head_hdr" && r=1
-chk "GET /?token → 303 + Set-Cookie hem_token جلسه‌ای (HttpOnly، بدون Max-Age)" $r
+chk "GET /?token → 303 + session Set-Cookie hem_token (HttpOnly, no Max-Age)" $r
 r=0; grep -q 'lang="fa"' "$head_root" || r=1; grep -q 'Headscale Easy Manager' "$head_root" || r=1
-chk "GET / (پس از ریدایرکت 303) → index.html با نشانگر فارسی (lang=fa + title)" $r
+chk "GET / (after the 303 redirect) → index.html with Persian markers (lang=fa + title)" $r
 r=0; [ "$code" = 200 ] || r=1
-chk "GET / → HTTP 200 پس از 303 (کد نهایی: $code)" $r
-# v0.3.2 — ضد باگ ویندوزی: GET / باید text/html باشد، هرگز JSON مبهم سلامت
+chk "GET / → HTTP 200 after 303 (final code: $code)" $r
+# v0.3.2 — anti Windows bug: GET / must be text/html, never ambiguous health JSON
 root_ct="$(curl -s -o /dev/null -w '%{content_type}' -H "Cookie: hem_token=$TOKEN" "http://127.0.0.1:$HEM_UI_PORT/")"
 r=0; case "$root_ct" in text/html*) ;; *) r=1;; esac
-chk "GET / → Content-Type: text/html (نه JSON مبهم — regression باگ UI ویندوزی)" $r
+chk "GET / → Content-Type: text/html (not ambiguous JSON — Windows UI bug regression)" $r
 root_body="$(curl -s -H "Cookie: hem_token=$TOKEN" "http://127.0.0.1:$HEM_UI_PORT/")"
 r=0; echo "$root_body" | grep -q '"service":"hem-agent"' && r=1
-chk "GET / هرگز JSON سلامت نمی‌دهد (بدنه بدون service:hem-agent)" $r
+chk "GET / never returns health JSON (body has no service:hem-agent)" $r
 replay_hdr="$(mktemp)"
 curl -s -o /dev/null -D "$replay_hdr" "http://127.0.0.1:$HEM_UI_PORT/?token=$TOKEN"
 r=0; grep -qi '^set-cookie: *hem_token=' "$replay_hdr" && r=1
-chk "بازیابی لینک قدیمی (تاریخچهٔ مرورگر) → بدون Set-Cookie (یک‌بارمصرف)" $r
+chk "old-link replay (browser history) → no Set-Cookie (one-time exchange)" $r
 
-# --- ۲) assetها با mime درست
+# --- 2) assets with the correct MIME types
 asset_css="$(find "$LINUX_DIR/ui/_next" -name '*.css' | head -1)"
 asset_js="$(find "$LINUX_DIR/ui/_next" -name '*.js' | head -1)"
 svg_ct="$(curl -s -o /dev/null -w '%{content_type}' "http://127.0.0.1:$HEM_UI_PORT/logo.svg")"
 css_ct="$(curl -s -o /dev/null -w '%{content_type}' "http://127.0.0.1:$HEM_UI_PORT${asset_css#$LINUX_DIR/ui}")"
 js_ct="$(curl -s -o /dev/null -w '%{content_type}' "http://127.0.0.1:$HEM_UI_PORT${asset_js#$LINUX_DIR/ui}")"
 r=0; [ "$svg_ct" = 'image/svg+xml' ] || r=1
-chk "logo.svg → image/svg+xml (بازیافتی: $svg_ct)" $r
+chk "logo.svg → image/svg+xml (actual: $svg_ct)" $r
 r=0; case "$css_ct" in text/css*) ;; *) r=1;; esac
-chk "css → text/css (بازیافتی: $css_ct)" $r
+chk "css → text/css (actual: $css_ct)" $r
 r=0; case "$js_ct" in application/javascript*|text/javascript*) ;; *) r=1;; esac
-chk "js → application/javascript (بازیافتی: $js_ct)" $r
+chk "js → application/javascript (actual: $js_ct)" $r
 
-# --- ۳) fallback SPA برای مسیر ناشناخته + no-cache روی index
+# --- 3) SPA fallback for unknown paths + no-cache on index
 spa="$(mktemp)"; spa_hdr="$(mktemp)"
 curl -s -o "$spa" -D "$spa_hdr" "http://127.0.0.1:$HEM_UI_PORT/route/nashnakhte/xyz"
 r=0; grep -q 'lang="fa"' "$spa" || r=1
-chk "fallback SPA → index.html برای مسیر ناشناخته" $r
+chk "SPA fallback → index.html for an unknown path" $r
 r=0; grep -qi '^cache-control: *no-store' "$spa_hdr" || r=1
 grep -qi '^cache-control: *no-store' "$head_hdr" || r=1
-chk "index.html بدون کش (Cache-Control: no-store)" $r
+chk "index.html not cached (Cache-Control: no-store)" $r
 
-# --- ۴) توکن (مدل v0.3.2 §2): health عمومیِ حداقلی؛ مسیر حساس بدون توکن 401؛
-#        کوکی کافی است؛ XTransformPort بی‌ضرر است
+# --- 4) token (v0.3.2 §2 model): minimal public health; sensitive route
+#        without a token → 401; a cookie is enough; XTransformPort is harmless
 h_code=$(curl -s -o /dev/null -w '%{http_code}' -H "X-HEM-Token: $TOKEN" "http://127.0.0.1:$HEM_UI_PORT/api/health")
 c_code=$(curl -s -o /dev/null -w '%{http_code}' -H "Cookie: hem_token=$TOKEN" "http://127.0.0.1:$HEM_UI_PORT/api/profiles")
 n_code=$(curl -s -o /dev/null -w '%{http_code}' "http://127.0.0.1:$HEM_UI_PORT/api/profiles")
 g_code=$(curl -s -o /dev/null -w '%{http_code}' -H "X-HEM-Token: $TOKEN" "http://127.0.0.1:$HEM_UI_PORT/api/health?XTransformPort=$HEM_UI_PORT")
 pub_body="$(curl -s "http://127.0.0.1:$HEM_UI_PORT/api/health")"
-r=0; [ "$h_code" = 200 ] || r=1; chk "هدر X-HEM-Token → 200 (health کامل)" $r
-r=0; [ "$c_code" = 200 ] || r=1; chk "کوکی hem_token (بدون هدر) → 200" $r
-r=0; [ "$n_code" = 401 ] || r=1; chk "مسیر حساس /api/profiles بدون توکن → 401" $r
+r=0; [ "$h_code" = 200 ] || r=1; chk "X-HEM-Token header → 200 (full health)" $r
+r=0; [ "$c_code" = 200 ] || r=1; chk "hem_token cookie (no header) → 200" $r
+r=0; [ "$n_code" = 401 ] || r=1; chk "sensitive route /api/profiles without a token → 401" $r
 r=0; echo "$pub_body" | grep -q '"service":"hem-agent"' || r=1
 echo "$pub_body" | grep -q '"uptimeSec"' && r=1
 echo "$pub_body" | grep -q '"sessions"' && r=1
-chk "health بدون توکن → 200 «حداقلی» (فقط ok/service/version؛ بدون uptime/sessions)" $r
-r=0; [ "$g_code" = 200 ] || r=1; chk "XTransformPort نادیده گرفته می‌شود → 200" $r
+chk "health without a token → 200 minimal (only ok/service/version; no uptime/sessions)" $r
+r=0; [ "$g_code" = 200 ] || r=1; chk "XTransformPort is ignored → 200" $r
 ver="$(curl -s -H "X-HEM-Token: $TOKEN" "http://127.0.0.1:$HEM_UI_PORT/api/health" | grep -oE '"version":"[^"]+"')"
-r=0; echo "$ver" | grep -q "\"$VERSION\"" || r=1; chk "نسخهٔ گزارش‌شدهٔ agent = $VERSION ($ver)" $r
+r=0; echo "$ver" | grep -q "\"$VERSION\"" || r=1; chk "agent-reported version = $VERSION ($ver)" $r
 
-# --- ۵) اتصال SSH واقعی (TOFU کامل) + exec واقعی روی باینری کامپایل‌شده
+# --- 5) real SSH connection (full TOFU) + real exec on the compiled binary
 AH="X-HEM-Token: $TOKEN"
 CT='content-type: application/json'
 c1="$(curl -s -X POST -H "$AH" -H "$CT" -d '{"inline":{"host":"127.0.0.1","port":2222,"username":"z","authMethod":"password","password":"hemtest-pass","hsMode":"custom"}}' "http://127.0.0.1:$HEM_UI_PORT/api/connect")"
 r=0; echo "$c1" | grep -q '"status":"fingerprint-required"' || r=1
-chk "اتصال → fingerprint-required (TOFU؛ home تازه)" $r
+chk "connect → fingerprint-required (TOFU; fresh home)" $r
 SID="$(echo "$c1" | grep -oE '"sessionId":"[^"]+"' | head -1 | cut -d'"' -f4)"
-r=0; [ -n "$SID" ] || r=1; chk "شناسهٔ نشست: ${SID:0:8}…" $r
+r=0; [ -n "$SID" ] || r=1; chk "session id: ${SID:0:8}…" $r
 c2="$(curl -s -X POST -H "$AH" -H "$CT" -d "{\"sessionId\":\"$SID\",\"accept\":true}" "http://127.0.0.1:$HEM_UI_PORT/api/connect/confirm")"
 r=0; echo "$c2" | grep -q '"status":"connected"' || r=1
-chk "confirm → connected (اثرانگشت ذخیره شد)" $r
+chk "confirm → connected (fingerprint saved)" $r
 
 prev="$(curl -s -H "$AH" -H "$CT" -d '{"cmd":"df -h"}' "http://127.0.0.1:$HEM_UI_PORT/api/s/$SID/console/preview")"
 r=0; echo "$prev" | grep -q '"allowed":true' || r=1
-chk "کنسول: پیش‌نمایش df -h مجاز" $r
+chk "console: df -h preview allowed" $r
 execd="$(curl -s -H "$AH" -H "$CT" -d '{"cmd":"df -h"}' "http://127.0.0.1:$HEM_UI_PORT/api/s/$SID/console")"
 r=0; echo "$execd" | grep -q '"exitCode":0' || r=1; echo "$execd" | grep -q 'Filesystem' || r=1
-chk "exec واقعی df -h از طریق ssh2ِ کامپایل‌شده (exitCode 0)" $r
+chk "real df -h exec via the compiled ssh2 (exitCode 0)" $r
 
 probe_code=$(curl -s -o /tmp/hem-probe.json -w '%{http_code}' -H "$AH" "http://127.0.0.1:$HEM_UI_PORT/api/s/$SID/probe")
 r=0; { [ "$probe_code" = 200 ] && grep -q '"os"' /tmp/hem-probe.json; } || r=1
-chk "probe واقعی (دستورات زندهٔ سرور)" $r
+chk "real probe (live server commands)" $r
 
 disc="$(curl -s -X POST -H "$AH" -H "$CT" -d "{\"sessionId\":\"$SID\"}" "http://127.0.0.1:$HEM_UI_PORT/api/disconnect")"
 r=0; echo "$disc" | grep -q '"ok":true' || r=1
-chk "قطع نشست" $r
+chk "session disconnect" $r
 
-# --- ۶) v0.3.2 §2 — مدل fail-closed روی «همین باینری»: شروع نمی‌شود، نه سرویسِ باز
-# بدون توکن و بدون صراحت → exit≠0 + AUTH_NOT_CONFIGURED (پیام فارسی روشن).
-# توجه: تحت set -e، خروجِ عمدیِ غیرصفر با «|| RC=$?» جمع می‌شود تا اسکریپت نمرُد.
+# --- 6) v0.3.2 §2 — fail-closed model on "this very binary": it must not
+# start, rather than run an open service. Without a token and without an
+# explicit setting → exit≠0 + AUTH_NOT_CONFIGURED (a clear Persian message).
+# Note: under set -e the deliberate non-zero exit is captured with "|| RC=$?"
+# so the script does not die.
 REF_HOME2="$LINUX_DIR/refuse-home"
 rm -rf "$REF_HOME2"
 REF_LOG2="$LINUX_DIR/refuse2.log"
@@ -423,81 +437,82 @@ REF_RC=0
 HEM_AGENT_PORT=31052 HEM_AGENT_HOME="$REF_HOME2" \
   timeout 20 "$LINUX_DIR/hem-manager" > "$REF_LOG2" 2>&1 || REF_RC=$?
 r=0; { [ "$REF_RC" -ne 0 ] && [ "$REF_RC" -ne 124 ]; } || r=1
-chk "بدون توکن و بدون HEM_AGENT_AUTH → exit≠0 (fail-closed، نه سرویسِ باز)" $r
-r=0; grep -q 'AUTH_NOT_CONFIGURED' "$REF_LOG2" && grep -q 'شروع نمی‌شود' "$REF_LOG2" || r=1
-chk "  … با پیام روشن AUTH_NOT_CONFIGURED (فارسی)" $r
-# open + HEM_AGENT_HOST=0.0.0.0 → exit≠0 + خطای loopback (سرویس بی‌احراز هویت روی شبکه ممنوع):
+chk "no token and no HEM_AGENT_AUTH → exit≠0 (fail-closed, not an open service)" $r
+r=0; grep -q 'AUTH_NOT_CONFIGURED' "$REF_LOG2" && grep -q 'refuses to start' "$REF_LOG2" || r=1
+chk "  … with a clear AUTH_NOT_CONFIGURED message (English, per user directive)" $r
+# open + HEM_AGENT_HOST=0.0.0.0 → exit≠0 + loopback error (an unauthenticated service on the network is forbidden):
 REF_LOG3="$LINUX_DIR/refuse3.log"
 REF_RC3=0
 HEM_AGENT_PORT=31053 HEM_AGENT_AUTH=open HEM_AGENT_HOST=0.0.0.0 HEM_AGENT_HOME="$REF_HOME2" \
   timeout 20 "$LINUX_DIR/hem-manager" > "$REF_LOG3" 2>&1 || REF_RC3=$?
 r=0; { [ "$REF_RC3" -ne 0 ] && [ "$REF_RC3" -ne 124 ]; } || r=1
-chk "open + HEM_AGENT_HOST=0.0.0.0 → exit≠0 (فقط loopback)" $r
+chk "open + HEM_AGENT_HOST=0.0.0.0 → exit≠0 (loopback only)" $r
 r=0; grep -q 'loopback' "$REF_LOG3" || r=1
-chk "  … با خطای روشن loopback" $r
+chk "  … with a clear loopback error" $r
 
 cleanup_bin
 trap - EXIT
-[ "$started_demo" = 0 ] || log "سرور SSH آزمایشی در همین اجرا روشن شد و روشن می‌ماند."
-[ "$errors" = 0 ] || fail "راستی‌آزمایی زندهٔ باینری لینوکسی شکست خورد ($errors مورد)."
-log "راستی‌آزمایی زندهٔ باینری لینوکسی کامل شد — ssh2/exec/UI/توکن همه واقعی کار می‌کنند."
+[ "$started_demo" = 0 ] || log "the test SSH server was started during this run and stays up."
+[ "$errors" = 0 ] || fail "live verification of the Linux binary failed ($errors case(s))."
+log "live verification of the Linux binary completed — ssh2/exec/UI/token all work for real."
 
 # ----------------------------------------------------------------------------
-# ۴) zip + sha256
+# 4) zip + sha256
 # ----------------------------------------------------------------------------
-log "ساخت $ZIP_NAME …"
+log "Building $ZIP_NAME …"
 (cd "$DIST" && rm -f "$ZIP_NAME" && zip -r -q "$ZIP_NAME" hem-manager)
 (cd "$DIST" && sha256sum "$ZIP_NAME" > "$ZIP_NAME.sha256")
 
 echo
-log "================= خروجی نهایی ================="
+log "================= final output ================="
 log "zip     : $ZIP ($(du -h "$ZIP" | cut -f1))"
 log "sha256  : $(cut -d' ' -f1 "$DIST/$ZIP_NAME.sha256")"
 log "exe     : $STAGE/hem-manager.exe ($(du -h "$STAGE/hem-manager.exe" | cut -f1))"
 log "ui      : $STAGE/ui ($(du -sh "$STAGE/ui" | cut -f1))"
-log "لینوکس : $LINUX_DIR/hem-manager ($(du -h "$LINUX_DIR/hem-manager" | cut -f1)) — آزموده‌شدهٔ زنده"
+log "linux  : $LINUX_DIR/hem-manager ($(du -h "$LINUX_DIR/hem-manager" | cut -f1)) — live-tested"
 echo
-log "محتویات zip:"
-# عضویتِ فایل‌ها با «فهرستِ یک‌باره در متغیر» بررسی می‌شود — نه `unzip -l | grep -q`.
-# دلیل: زیر pipefail، grep -q با تطابقِ زودهنگام (مثلاً ui/index.html در ابتدای
-# فهرست) unzip را با SIGPIPE می‌کشد، خروج خط لوله 141 می‌شود و «شکست کاذبِ
-# نبودن فایل» می‌سازد — همان الگوی ثبت‌شده در release.sh (اجرأ ۱۴:۲۷) که
-# در بررسی‌های v0.3.2-beta.2 به‌اشتباه دوباره وارد شده بود.
+log "zip contents:"
+# File membership is checked with a "one-shot listing held in a variable" —
+# not `unzip -l | grep -q`. Reason: under pipefail, grep -q with an early
+# match (e.g. ui/index.html near the top of the listing) kills unzip with
+# SIGPIPE, the pipeline exits 141, and a "file missing" false failure is
+# produced — the same pattern recorded in release.sh (the 14:27 run) that
+# was mistakenly reintroduced during the v0.3.2-beta.2 checks.
 ZIP_LISTING="$(unzip -l "$ZIP")"
 printf '%s\n' "$ZIP_LISTING" | sed 's/^/  /'
 LF=$'\n'
 ZIP_NAMES="$LF$(printf '%s\n' "$ZIP_LISTING" | awk 'NR>3 && NF==4 {print $4}')$LF"
-zip_has() { # $1 = نام دقیق مدخل — خروجی 0 یعنی موجود
+zip_has() { # $1 = exact entry name — exit status 0 means present
   case "$ZIP_NAMES" in *"$LF$1$LF"*) return 0 ;; *) return 1 ;; esac
 }
-# zip باید نصب‌کننده را داشته باشد — بستهٔ بدون نصب‌کننده هرگز «ساخته‌شده» نیست.
+# the zip must contain the installer — a package without an installer is never "built".
 zip_has "hem-manager/installer/install.sh" \
-  || fail "zip فایل installer/install.sh را ندارد — بستهٔ بدون نصب‌کننده هرگز ساخته نمی‌شود."
-# zip باید فایل‌های جانبی برنامه را کامل داشته باشد (رگرسیون v0.3.2-beta.2):
-# ui/ و اسکریپت‌های ویندوزی و راهنما — بستهٔ ناقص هرگز «ساخته‌شده» نیست.
+  || fail "zip is missing installer/install.sh — a package without an installer is never built."
+# the zip must contain all the app's side files (v0.3.2-beta.2 regression):
+# ui/, the Windows scripts, and the guide — an incomplete package is never "built".
 zip_has "hem-manager/ui/index.html" \
-  || fail "zip فایل ui/index.html را ندارد — بستهٔ بدون UI هرگز ساخته نمی‌شود."
+  || fail "zip is missing ui/index.html — a package without a UI is never built."
 zip_has "hem-manager/install.ps1" \
-  || fail "zip فایل install.ps1 را ندارد."
+  || fail "zip is missing install.ps1."
 zip_has "hem-manager/uninstall.ps1" \
-  || fail "zip فایل uninstall.ps1 را ندارد."
+  || fail "zip is missing uninstall.ps1."
 zip_has "hem-manager/README-WINDOWS-FA.txt" \
-  || fail "zip فایل README-WINDOWS-FA.txt را ندارد."
-# و بایت‌های فایل‌های متنی داخل zip باید همان قرارداد (BOM+CRLF) را داشته باشند.
+  || fail "zip is missing README-WINDOWS-FA.txt."
+# and the bytes of the text files inside the zip must satisfy the same contract (BOM+CRLF).
 rm -rf "$DIST/zip-guard" && mkdir -p "$DIST/zip-guard"
 unzip -q "$ZIP" "hem-manager/install.ps1" "hem-manager/uninstall.ps1" "hem-manager/README-WINDOWS-FA.txt" -d "$DIST/zip-guard"
 guard_windows_text "$DIST/zip-guard/hem-manager/install.ps1" "$DIST/zip-guard/hem-manager/uninstall.ps1" "$DIST/zip-guard/hem-manager/README-WINDOWS-FA.txt" \
-  || fail "فایل‌های متنی داخل zip قرارداد BOM+CRLF را نقض می‌کنند."
-grep -q "@VERSION@" "$DIST/zip-guard/hem-manager/README-WINDOWS-FA.txt" && fail "README داخل zip هنوز @VERSION@ دارد."
-grep -q "نسخهٔ $VERSION" "$DIST/zip-guard/hem-manager/README-WINDOWS-FA.txt" || fail "README داخل zip «نسخهٔ $VERSION» را ندارد."
+  || fail "text files inside the zip violate the BOM+CRLF contract."
+grep -q "@VERSION@" "$DIST/zip-guard/hem-manager/README-WINDOWS-FA.txt" && fail "README inside the zip still contains @VERSION@."
+grep -q "نسخهٔ $VERSION" "$DIST/zip-guard/hem-manager/README-WINDOWS-FA.txt" || fail "README inside the zip lacks the Persian version marker for $VERSION."
 rm -rf "$DIST/zip-guard"
 echo
 
-# پاک‌سازی کش منسوخ (v0.3.1 §1): ui-out دیگر نه ورودی است نه خروجی؛
-# UI همیشه تازه ساخته می‌شود. این پوشه در گیت ignore است.
+# Clean up the obsolete cache (v0.3.1 §1): ui-out is no longer an input or an
+# output; the UI is always built fresh. This folder is git-ignored.
 rm -rf "$AGENT_DIR/ui-out"
-log "پوشهٔ کهنهٔ ui-out (کش منسوخ) حذف شد."
-log "صادقانه: exe ویندوزی cross-compile از همین سورس است و در این لینوکس‌باکس"
-log "قابل اجرا نیست؛ «باینری لینوکسیِ همان سورس» به‌صورت زنده راستی‌آزمایی شد"
-log "(UI، توکن/کوکی، اتصال TOFU و exec واقعی SSH). آزمون روی خودِ ویندوز باید"
-log "در اولین فرصت روی یک ویندوز واقعی تکرار شود."
+log "removed the stale ui-out folder (obsolete cache)."
+log "Honest note: the Windows exe is a cross-compile of this same source and"
+log "cannot run on this Linux box; the Linux binary from the same source was"
+log "verified live (UI, token/cookie, TOFU connection, real SSH exec). Testing"
+log "on Windows itself must be repeated on real Windows at the first opportunity."

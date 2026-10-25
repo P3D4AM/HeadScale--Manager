@@ -1,32 +1,33 @@
 #!/usr/bin/env bun
 /**
- * generate-docs.ts — تولید محتوای مرکز آموزش در «زمان ساخت» (build-time).
+ * generate-docs.ts — build the learn-center content at build time.
  *
- * ریشهٔ اصلاح ایراد ۴.۹ ممیزی (AUDIT-2025-10 §1): رابط وب در زمان اجرا دیگر
- * هیچ فایلی از ریشهٔ پروژه نمی‌خواند (endpointهای /api/docs حذف شدند و خروجی
- * static export / بستهٔ ویندوز با آن‌ها ساخته نمی‌شد). این اسکریپت فصل‌های
- * docs/fa مخزن اصلی را می‌خواند، فرانت‌متر YAML را با همان منطق قبلی
- * (js-yaml + همین regex) جدا می‌کند و ماژول TypeScript ایزومورف تولید
- * می‌کند که UI مستقیماً import می‌کند — بدون شبکه، بدون fs، سازگار با export.
+ * Root of fix 4.9 of the AUDIT-2025-10 §1: the web UI no longer reads any
+ * file from the project root at run time (the /api/docs endpoints were
+ * removed; the static export / the Windows package could not be built with
+ * them). This script reads the docs/fa chapters of the main repository,
+ * extracts the YAML frontmatter with the same logic as before
+ * (js-yaml + the same regex) and generates an isomorphic TypeScript module
+ * that the UI imports directly — no network, no fs, export-compatible.
  *
- * اجرا: bun run docs:generate  (یا: bun scripts/generate-docs.ts)
- * خروجی: src/generated/docs-content.ts (فایل تولیدشده — دست‌نویس ممنوع)
+ * Run: bun run docs:generate  (or: bun scripts/generate-docs.ts)
+ * Output: src/generated/docs-content.ts (generated file — do not hand-edit)
  */
 import fs from 'node:fs'
 import path from 'node:path'
 import { load as yamlLoad } from 'js-yaml'
 
-/** ریشهٔ پروژهٔ وب — از مسیر خود اسکریپت (سازگار با هر cwd). */
+/** Web project root — derived from this script's location (cwd-independent). */
 const PROJECT_ROOT = path.resolve(path.dirname(path.resolve(process.argv[1] ?? '.')), '..')
 
-/** منبع مستندات: مخزن اصلی (قابل‌بازتعریف با HEM_PROJECT_ROOT مثل قرارداد قبلی). */
+/** Documentation source: the main repository (overridable with HEM_PROJECT_ROOT, like the previous contract). */
 const REPO_ROOT = process.env.HEM_PROJECT_ROOT
   ? path.resolve(process.env.HEM_PROJECT_ROOT)
   : PROJECT_ROOT
 const DOCS_FA_DIR = path.join(REPO_ROOT, 'headscale-easy-manager', 'docs', 'fa')
 const OUT_FILE = path.join(PROJECT_ROOT, 'src', 'generated', 'docs-content.ts')
 
-/** حداقل فصل‌های قراردادی محصول (متن UI روی این عدد وعده داده است). */
+/** Minimum contractual chapter count of the product (the UI text promises this number). */
 const MIN_CHAPTERS = 14
 
 interface GeneratedDoc {
@@ -43,9 +44,9 @@ function fail(message: string): never {
   process.exit(1)
 }
 
-// ─── خواندن فصل‌ها (همان منطق parser اندپوینت‌های قبلی /api/docs) ───
+// ─── Read the chapters (same logic as the previous /api/docs parser) ───
 if (!fs.existsSync(DOCS_FA_DIR)) {
-  fail(`پوشهٔ مستندات پیدا نشد: ${DOCS_FA_DIR} (متغیر HEM_PROJECT_ROOT را بررسی کنید)`)
+  fail(`docs folder not found: ${DOCS_FA_DIR} (check the HEM_PROJECT_ROOT variable)`)
 }
 
 const docs: GeneratedDoc[] = []
@@ -77,16 +78,16 @@ docs.sort((a, b) => a.order - b.order)
 
 if (docs.length < MIN_CHAPTERS) {
   fail(
-    `تعداد فصل‌ها ${docs.length} است — کمتر از حداقل قراردادی ${MIN_CHAPTERS}. ` +
-      'منبع docs/fa مخزن اصلی ناقص است.'
+    `chapter count is ${docs.length} — below the contractual minimum of ${MIN_CHAPTERS}. ` +
+      'The docs/fa source of the main repository is incomplete.'
   )
 }
 
-// ─── تولید ماژول ───
-const banner = `// ⚠️ فایل تولیدشده — ویرایش دستی ممنوع (scripts/generate-docs.ts)
-// منبع: headscale-easy-manager/docs/fa/*.md — بازتولید: bun run docs:generate
-// (اصلاح ایراد ۴.۹: محتوا در زمان ساخت تولید می‌شود تا خروجی static export
-//  و بستهٔ ویندوز به fs/اندپوینت زمان-اجرا وابسته نباشد.)
+// ─── Generate the module ───
+const banner = `// ⚠️ GENERATED FILE — do not edit by hand (scripts/generate-docs.ts)
+// Source: headscale-easy-manager/docs/fa/*.md — regenerate: bun run docs:generate
+// (Fix 4.9: content is generated at build time so the static export output
+//  and the Windows package do not depend on run-time fs/endpoints.)
 
 export interface GeneratedDoc {
   order: number
@@ -97,7 +98,7 @@ export interface GeneratedDoc {
   content: string
 }
 
-/** همهٔ فصل‌ها، مرتب‌شده بر اساس order فرانت‌متر (content بدون فرانت‌متر). */
+/** All chapters, ordered by the frontmatter order (content without frontmatter). */
 export const DOCS: GeneratedDoc[] = `
 
 const body = JSON.stringify(docs, null, 2) + '\n'
@@ -107,6 +108,6 @@ fs.writeFileSync(OUT_FILE, banner + body, 'utf-8')
 
 const kb = (fs.statSync(OUT_FILE).size / 1024).toFixed(1)
 console.log(
-  `✓ ${docs.length} فصل آموزش → ${path.relative(PROJECT_ROOT, OUT_FILE)} (${kb} KB) ` +
+  `✓ ${docs.length} learn chapters → ${path.relative(PROJECT_ROOT, OUT_FILE)} (${kb} KB) ` +
     `[orders: ${docs.map((d) => d.order).join(', ')}]`
 )

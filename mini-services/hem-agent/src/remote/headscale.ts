@@ -1,12 +1,12 @@
-// آداپتورهای CLI واقعی headscale v0.29.5 (قرارداد §7).
-// همهٔ فلگ‌ها با باینری واقعی راستی‌آزمایی شده‌اند:
+// Real headscale v0.29.5 CLI adapters (contract §7).
+// All flags verified against the real binary:
 //  - users list/create/rename(-i,-r)/destroy(-i,-n,--force)
 //  - nodes list/list-routes(-i)/approve-routes(-i,-r)/expire(-i,-d,--force)/rename(NEW -i)/tag(-i,-t)/delete(-i,--force)
-//  - preauthkeys create(-u,-e,--reusable,--ephemeral,--tags)/list(-o json؛ بدون --user، کلید ماسک)/expire(-i)/delete(-i)
+//  - preauthkeys create(-u,-e,--reusable,--ephemeral,--tags)/list(-o json; no --user, keys masked)/expire(-i)/delete(-i)
 //  - apikeys create(-e)/list(-o json)/expire(-i|-p)
 //  - policy get(-o json)/set(-f)/check(-f)
-//  - configtest، version، health
-// هیچ‌جا خروجی جدولی «حدس» نمی‌شود؛ هرجا JSON نبود صادقانه خطا می‌دهیم.
+//  - configtest, version, health
+// Table output is never guessed; wherever JSON is missing we fail honestly.
 
 import { HemError } from "../errors";
 import { runHs, type HsRunContext } from "../headscaleExec";
@@ -125,7 +125,7 @@ export async function hsNodesList(ctx: HsRunContext): Promise<HsNode[]> {
 }
 
 export async function hsNodesRoutes(ctx: HsRunContext): Promise<HsRouteEntry[]> {
-  // در 0.29.5 دستور سطح‌بالای routes وجود ندارد — فقط nodes list-routes (با -o json تست شده)
+  // In 0.29.5 there is no top-level routes command — only nodes list-routes (tested with -o json)
   const raw = await runJson<Array<Record<string, unknown>> | null>(
     ctx,
     ["nodes", "list-routes", "-o", "json"],
@@ -149,7 +149,7 @@ export async function hsNodesApproveRoutes(ctx: HsRunContext, id: number, routes
       throw new HemError("VALIDATION_FAILED", `مسیر «${r}» یک CIDR معتبر نیست.`, { route: r });
     }
   }
-  // رشتهٔ خالی = لغو همهٔ مسیرهای تأییدشده (رفتار واقعی 0.29.5)
+  // Empty string = revoke all approved routes (real 0.29.5 behavior)
   await runOk(
     ctx,
     ["nodes", "approve-routes", "--identifier", String(id), "--routes", routes.join(",")],
@@ -182,10 +182,10 @@ export async function hsNodesDelete(ctx: HsRunContext, id: number): Promise<void
 }
 
 // ---------------------------------------------------------------------------
-// preauthkeys — کلید کامل فقط یک‌بار برگردانده می‌شود؛ audit هرگز کلید کامل نمی‌بیند
+// preauthkeys — the full key is returned exactly once; audit never sees the full key
 // ---------------------------------------------------------------------------
 export async function hsPreAuthKeysList(ctx: HsRunContext): Promise<HsPreAuthKey[]> {
-  // ⚠️ در 0.29.5 فلگ --user وجود ندارد و کلیدها همیشه ماسک‌اند (hskey-auth-…-***)
+  // ⚠️ In 0.29.5 there is no --user flag and keys are always masked (hskey-auth-…-***)
   const raw = await runJson<Array<Record<string, unknown>> | null>(
     ctx,
     ["preauthkeys", "list", "-o", "json"],
@@ -306,7 +306,7 @@ export async function hsApiKeysExpire(ctx: HsRunContext, input: { id?: number; p
 export async function hsPolicyGet(ctx: HsRunContext): Promise<PolicyInfo> {
   const res = await runHs(ctx, ["policy", "get", "-o", "json"], { timeoutMs: 20_000 });
   const text = res.stdout.trim();
-  // وقتی سیاستی تنظیم نباشد: خطای JSON «{"error": …}» یا exit غیرصفر → {policy:null}
+  // When no policy is set: a JSON error object or a non-zero exit → {policy:null}
   if (res.code !== 0 || text.length === 0) {
     return { policy: null, format: "hujson" };
   }
@@ -316,7 +316,7 @@ export async function hsPolicyGet(ctx: HsRunContext): Promise<PolicyInfo> {
       return { policy: null, format: "hujson" };
     }
   } catch {
-    // خروجی غیرJSON (مثلاً جدول) — policy را به‌صورت متن خام برمی‌گردانیم
+    // Non-JSON output (e.g. a table) — return policy as raw text
     return { policy: text, format: "hujson" };
   }
   return { policy: text, format: "hujson" };
@@ -346,7 +346,7 @@ export async function hsPolicySet(ctx: HsRunContext, content: string): Promise<P
 }
 
 // ---------------------------------------------------------------------------
-// config — مسیر پیکربندی از پروفایل (custom: از پیشوند؛ system: /etc/headscale/config.yaml)
+// config — config path from the profile (custom: from the prefix; system: /etc/headscale/config.yaml)
 // ---------------------------------------------------------------------------
 export function resolveConfigPath(ctx: HsRunContext): string {
   if (ctx.configPath) return ctx.configPath;
@@ -361,7 +361,7 @@ export function resolveConfigPath(ctx: HsRunContext): string {
   return "/etc/headscale/config.yaml";
 }
 
-/** خواندن فایل از سرور با sudo در صورت نیاز (برای پیکربندی محافظت‌شده) */
+/** Read a file from the server with sudo if needed (for protected config) */
 async function readRemoteFile(ctx: HsRunContext, path: string): Promise<string> {
   const cmd = `base64 -w0 ${shellQuote(path)}`;
   const res =
@@ -377,7 +377,7 @@ async function readRemoteFile(ctx: HsRunContext, path: string): Promise<string> 
   return Buffer.from(res.stdout.trim(), "base64").toString("utf8");
 }
 
-/** نوشتن فایل روی سرور با sudo در صورت نیاز (نوشتن در /tmp و سپس mv) */
+/** Write a file on the server with sudo if needed (write to /tmp then mv) */
 async function writeRemoteFile(ctx: HsRunContext, path: string, content: string): Promise<void> {
   if (ctx.hsMode !== "system-sudo") {
     await ctx.ssh.writeFile(path, content);
@@ -387,7 +387,7 @@ async function writeRemoteFile(ctx: HsRunContext, path: string, content: string)
   if (mode === "none") {
     throw new HemError("SUDO_REQUIRED", "نوشتن پیکربندی نیازمند دسترسی sudo است که در دسترس نیست.");
   }
-  const tmp = SshSession.remoteTempName("hem-cfg"); // فقط منتقل (mv) می‌شود — پسوند مهم نیست
+  const tmp = SshSession.remoteTempName("hem-cfg"); // it is only moved (mv) — the extension does not matter
   await ctx.ssh.writeFile(tmp, content);
   const res = await ctx.ssh.execSudo(
     `mv ${shellQuote(tmp)} ${shellQuote(path)}`,
@@ -407,7 +407,7 @@ export async function hsConfigGet(ctx: HsRunContext): Promise<{ content: string;
 }
 
 export async function hsConfigValidate(ctx: HsRunContext, content: string): Promise<ConfigValidateResult> {
-  // ⚠️ پسوند .yaml الزامی است — viper نوع فایل را از پسوند تشخیص می‌دهد
+  // ⚠️ The .yaml extension is mandatory — viper infers the file type from the extension
   const tmp = SshSession.remoteTempName("hem-cfgtest", ".yaml");
   await ctx.ssh.writeFile(tmp, content);
   try {
@@ -430,12 +430,12 @@ export async function hsConfigSet(
 ): Promise<ConfigSetResult> {
   const path = resolveConfigPath(ctx);
   const backup = `${path}.hem-backup-${Date.now()}`;
-  // ۱) اعتبارسنجی پیش از هر تغییری
+  // 1) validate before any change
   const validation = await hsConfigValidate(ctx, content);
   if (!validation.valid) {
     return { ok: false, validated: false, restarted: false, error: validation.error ?? "پیکربندی نامعتبر است." };
   }
-  // ۲) پشتیبان از پیکربندی فعلی
+  // 2) back up the current config
   try {
     const cpCmd = `cp -a ${shellQuote(path)} ${shellQuote(backup)}`;
     const r =
@@ -453,7 +453,7 @@ export async function hsConfigSet(
       error: `ساخت نسخهٔ پشتیبان ناموفق بود: ${e instanceof Error ? e.message : String(e)}`,
     };
   }
-  // ۳) نوشتن پیکربندی جدید
+  // 3) write the new config
   try {
     await writeRemoteFile(ctx, path, content);
   } catch (e) {
@@ -465,7 +465,7 @@ export async function hsConfigSet(
       error: `نوشتن پیکربندی ناموفق بود: ${e instanceof Error ? e.message : String(e)}`,
     };
   }
-  // ۴) ری‌استارت سرویس (فقط حالت systemd)
+  // 4) restart the service (systemd mode only)
   let restarted = false;
   if (ctx.hsMode !== "custom") {
     const actionRes = await hsServiceAction(ctx, "restart", opts.restartUnit ?? "headscale").catch(
@@ -473,7 +473,7 @@ export async function hsConfigSet(
     );
     restarted = !(actionRes instanceof Error);
     if (actionRes instanceof Error) {
-      // بازگردانی خودکار پشتیبان — صداقت کامل
+      // auto-restore the backup — full honesty
       await restoreConfigBackup(ctx, path, backup);
       return {
         ok: false,
@@ -485,7 +485,7 @@ export async function hsConfigSet(
       };
     }
   }
-  // ۵) بررسی سلامت پس از اعمال
+  // 5) health check after applying
   const health = await hsHealth(ctx).catch(() => null);
   if (health && !health.healthy) {
     await restoreConfigBackup(ctx, path, backup);
@@ -515,7 +515,7 @@ async function restoreConfigBackup(ctx: HsRunContext, path: string, backup: stri
       await hsServiceAction(ctx, "restart", "headscale").catch(() => undefined);
     }
   } catch {
-    /* بازگردانی best-effort — در گزارش صداقت می‌شود */
+    /* best-effort restore — reported honestly */
   }
 }
 
@@ -524,12 +524,12 @@ async function restoreConfigBackup(ctx: HsRunContext, path: string, backup: stri
 // ---------------------------------------------------------------------------
 const SYSTEMD_UNAVAILABLE_RE = /not been booted with systemd|Failed to connect to bus|No such file or directory|System has not been booted|\boffline\b/i;
 
-/** آیا systemd واقعاً در دسترس است؟ — دو بررسی: دایرکتوری /run/systemd/system و خروجی is-system-running */
+/** Is systemd really available? — two checks: the /run/systemd/system directory and the is-system-running output */
 async function systemctlAvailable(ctx: HsRunContext): Promise<boolean> {
   const dirRes = await ctx.ssh
     .exec("[ -d /run/systemd/system ] && echo yes || echo no", { timeoutMs: 10_000 })
     .catch(() => null);
-  if (dirRes && dirRes.stdout.trim() === "no") return false; // کانتینر/محیط بدون systemd
+  if (dirRes && dirRes.stdout.trim() === "no") return false; // container/environment without systemd
   const res = await ctx.ssh.exec("systemctl is-system-running 2>&1 || true", { timeoutMs: 10_000 }).catch(() => null);
   if (!res) return dirRes ? dirRes.stdout.trim() === "yes" : false;
   return !SYSTEMD_UNAVAILABLE_RE.test(res.stdout + res.stderr);
@@ -559,7 +559,7 @@ export async function hsServiceStatus(ctx: HsRunContext, unit: string): Promise<
       output,
     };
   }
-  // fallback صادقانه: بررسی فرایند
+  // honest fallback: process check
   const procRes = await ctx.ssh
     .exec(`pgrep -af ${shellQuote(unit)} 2>/dev/null | grep -v pgrep || true`, { timeoutMs: 10_000 })
     .catch(() => null);
@@ -629,9 +629,9 @@ export async function hsLogs(
       lines: journalRes.stdout.split("\n").filter((l) => l.trim().length > 0),
     };
   }
-  // fallback: فایل لاگ — ابتدا مسیر صریح پروفایل (logPath) و سپس (قرارداد §4)
-  // خروجی «headscale serve» در حالت custom: کنار فایل پیکربندی (مثل /home/z/hs-test/server.log).
-  // هر кандидат فقط در صورت موفقیت واقعی tail استفاده می‌شود؛ در غیر این صورت خطای صادقانه.
+  // fallback: log file — first the profile explicit path (logPath) then (contract §4)
+  // the headscale serve output in custom mode: next to the config file (e.g. /home/z/hs-test/server.log).
+  // Each candidate is only used if tail actually succeeds; otherwise an honest error.
   const candidates: string[] = [];
   if (ctx.logPath) candidates.push(ctx.logPath);
   if (unit === "headscale" && ctx.hsMode === "custom") {
@@ -665,10 +665,10 @@ export async function hsVersion(ctx: HsRunContext): Promise<HsVersion> {
   return { version, raw: text };
 }
 
-/** سلامت سه‌لایه (قرارداد §4): سرویس / HTTP محلی / CLI */
+/** Three-layer health (contract §4): service / local HTTP / CLI */
 export async function hsHealth(ctx: HsRunContext): Promise<HealthResult> {
   const healthUrl = ctx.healthUrl || "http://127.0.0.1:8080/health";
-  // لایهٔ ۱: سرویس (systemd یا فرایند)
+  // Layer 1: service (systemd or process)
   const status = await hsServiceStatus(ctx, "headscale").catch(() => null);
   const serviceOk = status?.active === true;
   const serviceLayer = {
@@ -682,7 +682,7 @@ export async function hsHealth(ctx: HsRunContext): Promise<HealthResult> {
           : "نه systemd و نه فرایند headscale یافت نشد"
       : "بررسی وضعیت سرویس ناموفق بود",
   };
-  // لایهٔ ۲: HTTP سلامت از خود سرور (curl محلی روی سرور)
+  // Layer 2: health HTTP from the server itself (local curl on the server)
   const httpRes = await ctx.ssh
     .exec(`curl -s -m 5 -w '\\n%{http_code}' ${shellQuote(healthUrl)} 2>&1`, { timeoutMs: 12_000 })
     .catch(() => null);
@@ -700,7 +700,7 @@ export async function hsHealth(ctx: HsRunContext): Promise<HealthResult> {
     }
   }
   const httpLayer = { ok: httpOk, via: "curl(سرور)", detail: httpDetail };
-  // لایهٔ ۳: CLI خود headscale
+  // Layer 3: the headscale CLI itself
   const cliRes = await runHs(ctx, ["health"], { timeoutMs: 20_000 }).catch(() => null);
   const cliOk = cliRes?.code === 0;
   const cliLayer = {

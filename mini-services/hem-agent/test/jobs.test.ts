@@ -1,7 +1,7 @@
-// تست قابلیت اطمینان job (§5 — Task 5-d):
-//  • بافر حلقه‌ای ۵۰۰ خطی + صفحه‌بندی since (REST fallback)
-//  • کلاینت socket.io که «بعد از شروع job» متصل می‌شود: REST fallback همهٔ خطوط را
-//    می‌گیرد؛ socket.io خطوط بعدی + job:done را زنده می‌گیرد.
+// Job reliability tests (§5 — Task 5-d):
+//  • 500-line ring buffer + since pagination (REST fallback)
+//  • a socket.io client that connects "after the job started": the REST fallback delivers
+//    all lines; socket.io delivers the following lines + job:done live.
 import { afterAll, beforeAll, expect, test } from "bun:test";
 import { io, type Socket } from "socket.io-client";
 import { startTestServer, TEST_HOST, TEST_PASSWORD, type TestServerHandle } from "./server";
@@ -15,9 +15,9 @@ import {
 import { JobManager } from "../src/events";
 
 // ---------------------------------------------------------------------------
-// واحد: JobManager — بافر حلقه‌ای و صفحه‌بندی
+// unit: JobManager — ring buffer and pagination
 // ---------------------------------------------------------------------------
-test("JobManager: بافر حلقه‌ای ۵۰۰ خط + truncated + صفحه‌بندی since", () => {
+test("JobManager: 500-line ring buffer + truncated + since pagination", () => {
   const jobs = new JobManager();
   jobs.register({
     id: "job-unit1",
@@ -31,17 +31,17 @@ test("JobManager: بافر حلقه‌ای ۵۰۰ خط + truncated + صفحه‌
   expect(page0.logs.length).toBe(500);
   expect(page0.truncated).toBe(true);
   expect(page0.nextSince).toBe(600);
-  expect(page0.logs[0].line).toBe("line-101"); // قدیمی‌ترینِ باقی‌مانده
+  expect(page0.logs[0].line).toBe("line-101"); // the oldest surviving line
   expect(page0.logs[499].line).toBe("line-600");
   expect(page0.logs[0].seq).toBe(101);
 
-  // صفحه‌بندی: از میانه
+  // pagination: from the middle
   const page250 = jobs.getLog("job-unit1", 250)!;
   expect(page250.logs.length).toBe(350);
   expect(page250.logs[0].seq).toBe(251);
-  expect(page250.truncated).toBe(false); // از ۲۵۱ به بعد چیزی حذف نشده
+  expect(page250.truncated).toBe(false); // nothing after 251 was dropped
 
-  // پایان + وضعیت
+  // done + status
   jobs.jobDone("job-unit1", false, 3, "خلاصهٔ تست", "partial_failure");
   const status = jobs.getStatus("job-unit1")!;
   expect(status.status).toBe("done");
@@ -50,14 +50,14 @@ test("JobManager: بافر حلقه‌ای ۵۰۰ خط + truncated + صفحه‌
   expect(status.summary).toBe("خلاصهٔ تست");
   expect(status.finalState).toBe("partial_failure");
   expect(status.logCount).toBe(600);
-  // رکورد پس از پایان هم در دسترس است (REST fallback)
+  // the record stays accessible after completion (REST fallback)
   expect(jobs.getLog("job-unit1", 590)!.logs.length).toBe(10);
   expect(jobs.getLog("job-unknown", 0)).toBeUndefined();
   expect(jobs.getStatus("job-unknown")).toBeUndefined();
 });
 
 // ---------------------------------------------------------------------------
-// یکپارچه: job کنسول استریمی + REST fallback + socket.io دیرهنگام
+// integration: streaming console job + REST fallback + late socket.io
 // ---------------------------------------------------------------------------
 let ts: TestServerHandle;
 let stack: TestStack;
@@ -68,8 +68,8 @@ const hsPrefix = "/tmp/hs-bin/headscale --config /home/z/hs-test/config.yaml";
 beforeAll(async () => {
   ensureHeadscaleHealthy();
   ts = await startTestServer({ port: 0 });
-  stack = buildTestStack({ authMode: "open" }); // v0.3.2 §2: تست منطق کسب‌وکار در استثنای مستندِ توسعه (بدون احراز هویت)
-  srv = await listenStackIo(stack, { authMode: "open" }); // v0.3.2 §2: استثنای مستندِ توسعه
+  stack = buildTestStack({ authMode: "open" }); // v0.3.2 §2: business-logic tests under the documented dev exception (no auth)
+  srv = await listenStackIo(stack, { authMode: "open" }); // v0.3.2 §2: documented dev exception
   sid = await connectAndConfirm(srv.baseUrl, {
     host: TEST_HOST,
     port: ts.port,
@@ -100,9 +100,9 @@ const post = async (path: string, body: unknown): Promise<{ status: number; body
 };
 
 test(
-  "job استریمی کنسول: کلاینتِ بعد از شروع → REST fallback کامل + socket.io زنده",
+  "streaming console job: a post-start client → full REST fallback + live socket.io",
   async () => {
-    // کلاینت وصل است ولی اتاق job را هنوز نمی‌شناسد (بعد از پاسخ HTTP جدا می‌کند)
+    // the client is connected but doesn't know the job room yet (it joins after the HTTP response)
     const client: Socket = io(srv.baseUrl, { transports: ["websocket"] });
     await new Promise<void>((res) => (client.connected ? res() : client.once("connect", () => res())));
 
@@ -111,7 +111,7 @@ test(
     expect(body.ok).toBe(true);
     const jobId = body.jobId as string;
 
-    // «اتصال دیرهنگام»: مشتریِ فقط-REST لاگ‌ها را با poll می‌گیرد
+    // "late connection": a REST-only client polls for the logs
     let lines: any[] = [];
     for (let i = 0; i < 100; i++) {
       const res = await fetch(`${srv.baseUrl}/api/jobs/${jobId}/log?since=0`);
@@ -121,28 +121,28 @@ test(
       if (st.job?.status === "done" && lines.length > 0) break;
       await new Promise((r) => setTimeout(r, 150));
     }
-    // خط اول: فرمان واقعی اجراشده (prefix حالت custom)؛ خروجی واقعی JSON کاربران هم در لاگ است
+    // first line: the actually-executed command (custom-mode prefix); the real users JSON output is in the log too
     expect(lines[0].line).toContain("users list");
     const joined = lines.map((l) => l.line).join("\n");
-    expect(joined).toContain("users"); // خروجی واقعی CLI
+    expect(joined).toContain("users"); // real CLI output
 
-    // صفحه‌بندی since: فقط خطوط جدیدتر
+    // since pagination: only newer lines
     const sinceRes = await (await fetch(`${srv.baseUrl}/api/jobs/${jobId}/log?since=${lines[0].seq}`)).json();
     expect(sinceRes.logs.length).toBe(lines.length - 1);
 
-    // job ناشناخته → 404
+    // unknown job → 404
     const notFound = await fetch(`${srv.baseUrl}/api/jobs/job-nope`);
     expect(notFound.status).toBe(404);
 
-    // رویداد پایان از socket.io (کلاینت اتاق را دیرتر جدا کرده — job:done باید رسیده باشد
-    // چون اجرای SSH زمان بیشتری از subscribe دارد؛ اگر از دست رفت، REST پوشش می‌دهد)
+    // the finish event from socket.io (the client joined the room later — job:done should have arrived
+    // because the SSH run outlasts the subscribe; if it was missed, REST covers it)
     client.disconnect();
   },
   60_000,
 );
 
 test(
-  "socket.io: مشترکِ اتاق job، رویدادهای زندهٔ job:log و job:done را می‌گیرد",
+  "socket.io: a job-room subscriber gets live job:log and job:done events",
   async () => {
     const client: Socket = io(srv.baseUrl, { transports: ["websocket"] });
     await new Promise<void>((res) => (client.connected ? res() : client.once("connect", () => res())));
@@ -154,7 +154,7 @@ test(
 
     const events: any[] = [];
     const done = await new Promise<any>((resolve, reject) => {
-      const timer = setTimeout(() => reject(new Error("job:done نرسید")), 30_000);
+      const timer = setTimeout(() => reject(new Error("job:done never arrived")), 30_000);
       client.on("job:log", (p: any) => p?.jobId === jobId && events.push(p));
       client.on("job:done", (p: any) => {
         if (p?.jobId === jobId) {
@@ -166,7 +166,7 @@ test(
     client.disconnect();
     expect(done.ok).toBe(true);
     expect(done.exitCode).toBe(0);
-    expect(events.length).toBeGreaterThan(0); // حداقل خط فرمان و خروجی نسخه
+    expect(events.length).toBeGreaterThan(0); // at least the command line and the version output
   },
   60_000,
 );

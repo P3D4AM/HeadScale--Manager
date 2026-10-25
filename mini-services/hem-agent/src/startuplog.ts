@@ -1,21 +1,21 @@
-// startuplog — لاگ تشخیصیِ راه‌اندازی (v0.3.2-beta.2 — «بسته‌شدن سریع EXE»).
+// startuplog — diagnostic startup log (v0.3.2-beta.2 — the EXE closes instantly bug).
 //
-// چرا: تا این نسخه، اگر راه‌اندازی شکست می‌خورد (پیکربندی احراز هویت، اشغال
-// بودن پورت، نبود ui/، خطای فایل‌سیستم، …) تنها خروجیِ لحظه‌ایِ کنسول نوشته
-// می‌شد و با بسته‌شدن پنجره، شاهدیه از بین می‌رفت. این لاگ فایل‌محور است:
+// Why: until this version, when startup failed (auth config, port already in use,
+// missing ui/, filesystem error, …) only momentary console output was written and
+// the evidence vanished with the window closing. This log is file-based:
 //
-//   • مسیرِ مشخص و پایدار: <home>/logs/hem-agent.log
-//     (ویندوز: %USERPROFILE%\.hem-agent\logs\hem-agent.log — قابل تنظیم با HEM_AGENT_HOME)
-//   • هر رکورد یک خط JSON است: ts / level / phase / event / code? / detail? / stack?
-//   • «زمان، مرحلهٔ راه‌اندازی، نوع خطا و Stack Trace» — خواستهٔ مستقیم گزارش باگ.
-//   • چرخش حجم: سقف ۲۵۶KB — نسخهٔ قبلی به hem-agent.log.1 منتقل می‌شود (یک نسل).
-//   • هر رشته از Redactor می‌گذرد (token=***، password=***، کلید خصوصی، …).
-//     توکن دسکتاپ و نشانی بوت‌استرپ (?token=…) «هیچ‌وقت» به این فایل نوشته
-//     نمی‌شوند — تنها کانال تحویل بوت‌استرپ، همان خط کنسول است (index.ts).
-//   • شکستِ خودِ لاگ هرگز برنامه را نمی‌کشد (best-effort، try/catch).
+//   • A well-known, stable path: <home>/logs/hem-agent.log
+//     (Windows: %USERPROFILE%\.hem-agent\logs\hem-agent.log — configurable via HEM_AGENT_HOME)
+//   • Each record is one JSON line: ts / level / phase / event / code? / detail? / stack?
+//   • Time, startup phase, error type and stack trace — the direct ask of the bug report.
+//   • Size rotation: 256KB cap — the previous generation moves to hem-agent.log.1 (one generation).
+//   • Every string goes through the Redactor (token=***, password=***, private key, …).
+//     The desktop token and the bootstrap URL (?token=…) are never written to this
+//     file — bootstrap delivery happens only via the console line (index.ts).
+//   • A failure of the log itself never kills the program (best-effort, try/catch).
 //
-// این ماژول «قابل تست» است: createStartupLog(homeDir, redactor) و ابزار
-// readEntries برای تست‌ها.
+// This module is testable: createStartupLog(homeDir, redactor) plus the
+// readEntries helper for tests.
 
 import * as fs from "node:fs";
 import * as path from "node:path";
@@ -31,15 +31,15 @@ export interface StartupEventExtra {
 }
 
 export interface StartupLog {
-  /** مسیر کامل فایل لاگ — در پیام‌های خطا به کاربر هم چاپ می‌شود */
+  /** Full log file path — also printed in user-facing error messages */
   readonly logPath: string;
-  /** رخداد عادی راه‌اندازی (level=info) */
+  /** Normal startup event (level=info) */
   event(phase: string, event: string, extra?: StartupEventExtra): void;
-  /** رخداد هشدار (level=warn) */
+  /** Warning event (level=warn) */
   warn(phase: string, event: string, extra?: StartupEventExtra): void;
-  /** خطای مهلک — level=error؛ شناسهٔ خطا + پیام + Stack Trace اگر باشد */
+  /** Fatal error — level=error; error code + message + stack trace if any */
   fatal(code: string, message: string, err?: unknown): void;
-  /** آیا تاکنون خطای مهلکی ثبت شده؟ (برای تصمیم خروج در index.ts) */
+  /** Has any fatal error been logged? (for the exit decision in index.ts) */
   hasFatal(): boolean;
 }
 
@@ -65,7 +65,7 @@ function messageOf(err: unknown): string {
   return String(err);
 }
 
-/** ساخت لاگ تشخیصی برای «همین اجرا» — homeDir معمولاً agentHome() است */
+/** Create a diagnostic log for this run — homeDir is usually agentHome() */
 export function createStartupLog(homeDir: string, redactor: Redactor): StartupLog {
   const logsDir = path.join(homeDir, "logs");
   const logPath = path.join(logsDir, "hem-agent.log");
@@ -82,11 +82,11 @@ export function createStartupLog(homeDir: string, redactor: Redactor): StartupLo
       try {
         if (fs.existsSync(old)) fs.rmSync(old);
       } catch {
-        /* نگه‌داشتن نسل قبلی مهم نیست */
+        /* keeping the previous generation is not critical */
       }
       fs.renameSync(logPath, old);
     } catch {
-      /* چرخش نبود؟ همان فایل ادامه می‌یابد — مهم نیست */
+      /* no rotation? the same file continues — not critical */
     }
   };
 
@@ -96,7 +96,7 @@ export function createStartupLog(homeDir: string, redactor: Redactor): StartupLo
       rotateIfNeeded();
       fs.appendFileSync(logPath, `${JSON.stringify(entry)}\n`, "utf8");
     } catch {
-      /* لاگِ لاگ نمی‌نویسیم — best-effort */
+      /* no logging about logging — best-effort */
     }
   };
 
@@ -129,7 +129,7 @@ export function createStartupLog(homeDir: string, redactor: Redactor): StartupLo
         detail: safe(message),
         ...(stack ? { stack: safe(stack) } : {}),
       });
-      // اگر خود خطا message متفاوتی دارد، آن هم داخل detail می‌آید (بدون مقدار حساس).
+      // If the underlying error has a different message, it is also recorded in detail (no sensitive values).
       if (err !== undefined) {
         const em = safe(messageOf(err));
         if (em && !safe(message).includes(em)) {
@@ -149,7 +149,7 @@ export function createStartupLog(homeDir: string, redactor: Redactor): StartupLo
   };
 }
 
-/** خواندن رکوردها برای تست‌ها — خطوط خراب نادیده گرفته می‌شوند */
+/** Read records for tests — corrupt lines are skipped */
 export function readStartupEntries(logPath: string): StartupLogEntry[] {
   const out: StartupLogEntry[] = [];
   try {
@@ -160,11 +160,11 @@ export function readStartupEntries(logPath: string): StartupLogEntry[] {
       try {
         out.push(JSON.parse(t) as StartupLogEntry);
       } catch {
-        /* خط ناقص */
+        /* incomplete line */
       }
     }
   } catch {
-    /* فایل نیست */
+    /* no file */
   }
   return out;
 }

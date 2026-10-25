@@ -1,5 +1,5 @@
-// کاوش سیستم سرور (قرارداد §6) — فقط با دستورات واقعی، خروجی صادقانه.
-// هیچ مقداری حدس زده نمی‌شود؛ اگر دستوری در دسترس نبود، همان‌جا honest گزارش می‌شود.
+// Server system probe (contract §6) — real commands only, honest output.
+// No value is ever guessed; if a command is unavailable it is reported honestly right there.
 
 import type { SshSession } from "../ssh";
 import { detectSudoMode } from "../sudo";
@@ -9,7 +9,7 @@ export interface ProbeContext {
   ssh: SshSession;
   username: string;
   password?: string;
-  /** مسیر پیکربندی headscale برای بررسی وجود (حالت custom) */
+  /** headscale config path to check for existence (custom mode) */
   configPathHint?: string;
 }
 
@@ -34,7 +34,7 @@ function parseOsRelease(text: string): Record<string, string> {
   return data;
 }
 
-/** تجزیهٔ خروجی ss -tulpn (مشترک با /system/ports) */
+/** Parse ss -tulpn output (shared with /system/ports) */
 export function parseSsPorts(text: string): ProbePort[] {
   const ports: ProbePort[] = [];
   for (const line of text.split("\n").slice(1)) {
@@ -85,7 +85,7 @@ export async function runProbe(ctx: ProbeContext): Promise<ProbeResult> {
   const warnings: string[] = [];
   const blockers: string[] = [];
 
-  // پارالال ولی با بسته‌های کوچک — ssh2 کانال‌های همزمان را خوب مدیریت می‌کند
+  // parallel but with small payloads — ssh2 handles concurrent channels well
   const [osRes, archRes, kernelRes, pyPathRes, pyVerRes, pyYamlRes, systemdDirRes, pidofRes, dfRes, freeRes, nprocRes, pubIpRes, addrRes, ssRes, ufwRes, hsPathRes, hsDpkgRes, hsVerRes, caddyRes, nginxRes, hsCfgRes, hemStateRes, hsctlRes] =
     await Promise.all([
       tryExec(ssh, "cat /etc/os-release"),
@@ -165,7 +165,7 @@ export async function runProbe(ctx: ProbeContext): Promise<ProbeResult> {
   if (memLine) {
     const cols = memLine.trim().split(/\s+/);
     const total = Number(cols[1]);
-    // Debian جدید: total used free shared buff/cache available
+    // new Debian format: total used free shared buff/cache available
     const avail = Number(cols[6] ?? cols[2]);
     if (Number.isFinite(total)) mem = { totalMb: total, availMb: Number.isFinite(avail) ? avail : 0 };
   }
@@ -189,7 +189,7 @@ export async function runProbe(ctx: ProbeContext): Promise<ProbeResult> {
 
   // --- ports ---
   const ports = parseSsPorts(ssRes ? ssRes.stdout : "");
-  // اشغال پورت ۸۰/۴۴۳ توسط فرایندی غیر caddy/nginx → مانع نصب
+  // port 80/443 held by a process other than caddy/nginx → install blocker
   for (const p of ports) {
     if (p.proto === "tcp" && (p.port === 80 || p.port === 443)) {
       const proc = (p.process ?? "").toLowerCase();
@@ -216,7 +216,7 @@ export async function runProbe(ctx: ProbeContext): Promise<ProbeResult> {
   } else if (ufw === "inactive") {
     warnings.push("فایروال ufw غیرفعال است؛ توصیه می‌شود پس از نصب فعال شود.");
   }
-  const firewall = { ufw, otherRules: false }; // خواندن iptables بدون دسترسی مدیر ممکن نیست — صادقانه false با این توضیح
+  const firewall = { ufw, otherRules: false }; // reading iptables is impossible without root — honestly false with this note
 
   // --- sudo ---
   const sudoMode = await detectSudoMode(ssh, { username: ctx.username, password: ctx.password }).catch(
@@ -259,7 +259,7 @@ export async function runProbe(ctx: ProbeContext): Promise<ProbeResult> {
     hsctlOnPath: hsctlRes?.code === 0 && out(hsctlRes).trim().length > 0,
   };
 
-  // --- مانع‌ها (قرارداد §6) ---
+  // --- blockers (contract §6) ---
   if (!["debian", "ubuntu", "raspbian"].includes(os.id)) {
     blockers.push(`سیستم‌عامل سرور «${os.pretty || os.id}» پشتیبانی نمی‌شود — فقط Debian/Ubuntu.`);
   }

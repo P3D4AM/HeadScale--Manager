@@ -1,5 +1,5 @@
-// تست کنسول (قرارداد §9) — allowlist واقعی؛ اجرای واقعی headscale از طریق shim؛
-// دستور مسدود هرگز اجرا نمی‌شود (اثر جانبی بررسی می‌شود).
+// Console tests (spec §9) — the real allowlist; real headscale runs via the shim;
+// a blocked command is never executed (side effects are verified).
 import { afterAll, beforeAll, expect, test } from "bun:test";
 import { existsSync } from "node:fs";
 import { startTestServer, TEST_HOST, TEST_PASSWORD, type TestServerHandle } from "./server";
@@ -21,7 +21,7 @@ const hsPrefix = "/tmp/hs-bin/headscale --config /home/z/hs-test/config.yaml";
 beforeAll(async () => {
   ensureHeadscaleHealthy();
   ts = await startTestServer({ port: 0 });
-  stack = buildTestStack({ authMode: "open" }); // v0.3.2 §2: تست منطق کسب‌وکار در استثنای مستندِ توسعه (بدون احراز هویت)
+  stack = buildTestStack({ authMode: "open" }); // v0.3.2 §2: business-logic tests under the documented dev exception (no auth)
   srv = await listenApp(stack.app);
   sid = await connectAndConfirm(srv.baseUrl, {
     host: TEST_HOST,
@@ -52,16 +52,16 @@ const post = async (path: string, body: unknown): Promise<{ status: number; body
   return { status: res.status, body: await res.json() };
 };
 
-test("preview: دستور مجاز → allowed + رشتهٔ دقیق (در حالت custom = prefix واقعی پروفایل)", async () => {
+test("preview: allowed command → allowed + exact string (in custom mode = the profile's real prefix)", async () => {
   const { status, body } = await post("/console/preview", { cmd: "headscale users list -o json" });
   expect(status).toBe(200);
   expect(body.allowed).toBe(true);
-  // فرمان واقعی که اجرا خواهد شد: prefix حالت custom + آرگومان‌های کاربر
+  // the real command that will run: the custom-mode prefix + the user's arguments
   expect(body.exactCommand).toBe(`${hsPrefix} users list -o json`);
   expect(body.reason).toBeUndefined();
 });
 
-test("preview: دستور مسدود → دلیل فارسی", async () => {
+test("preview: blocked command → Persian reason", async () => {
   const { status, body } = await post("/console/preview", { cmd: "ufw allow 22/tcp" });
   expect(status).toBe(200);
   expect(body.allowed).toBe(false);
@@ -69,7 +69,7 @@ test("preview: دستور مسدود → دلیل فارسی", async () => {
   expect(body.reason).toContain("ufw");
 });
 
-test("اجرای واقعی: headscale users list -o json (باینری واقعی از طریق shim)", async () => {
+test("real execution: headscale users list -o json (the real binary via the shim)", async () => {
   const { status, body } = await post("/console", { cmd: "headscale users list -o json" });
   expect(status).toBe(200);
   expect(body.exitCode).toBe(0);
@@ -79,30 +79,30 @@ test("اجرای واقعی: headscale users list -o json (باینری واقع
   expect(users[0].name).toBeTruthy();
 });
 
-test("دستور مسدود → 400 COMMAND_BLOCKED بدون هیچ اجرا (اثر جانبی صفر)", async () => {
+test("blocked command → 400 COMMAND_BLOCKED with no execution at all (zero side effects)", async () => {
   const marker = `/tmp/hem-console-pwned-${Date.now()}`;
   const { status, body } = await post("/console", { cmd: `headscale users list; touch ${marker}` });
   expect(status).toBe(400);
   expect(body.error).toBe("COMMAND_BLOCKED");
-  expect(body.message).toBeTruthy(); // دلیل فارسی
-  // هیچ اجرایی رخ نداده — فایل مارکر ساخته نشده است
+  expect(body.message).toBeTruthy(); // Persian reason
+  // nothing was executed — the marker file was not created
   expect(existsSync(marker)).toBe(false);
 });
 
-test("curl به میزبان غیرمجاز → COMMAND_BLOCKED", async () => {
+test("curl to a disallowed host → COMMAND_BLOCKED", async () => {
   const { status, body } = await post("/console", { cmd: "curl -s -m 5 http://evil.example.com/x" });
   expect(status).toBe(400);
   expect(body.error).toBe("COMMAND_BLOCKED");
 });
 
-test("curl مجاز به health محلی → اجرای واقعی", async () => {
+test("allowed curl to the local health → real execution", async () => {
   const { status, body } = await post("/console", { cmd: "curl -s -m 5 http://127.0.0.1:8080/health" });
   expect(status).toBe(200);
   expect(body.exitCode).toBe(0);
   expect(body.stdout).toContain("pass");
 });
 
-test("audit: دستور اجراشده در حسابرسی ثبت شده است", async () => {
+test("audit: the executed command is recorded in the audit log", async () => {
   const res = await fetch(`${srv.baseUrl}/api/audit?limit=50`);
   const body = (await res.json()) as { entries: { action: string; target?: string }[] };
   const exec = body.entries.filter((e) => e.action === "console_exec");

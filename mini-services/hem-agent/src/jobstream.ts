@@ -1,18 +1,18 @@
-// تجزیهٔ خروجی گام‌به‌گام hsctl (و نصب‌کننده) برای رویدادهای job (قرارداد §5).
-// الگو بر اساس خروجی «واقعی» StepRunner (src/hem/core/runner.py) نوشته شده است:
-//   [~] گام N/total — عنوان            ← شروع گام
-//   [✓] گام N/total — عنوان — نتیجه     ← موفق
-//   [!] گام N/total — عنوان — نتیجه     ← نیاز به اقدام
-//   [✗] گام N/total — عنوان — نتیجه     ← ناموفق
-// (اعداد ASCII هستند؛ آیکن‌ها ممکن است در tty رنگی باشند → ANSI-strip قبل از تجزیه.)
+// Step-by-step parsing of hsctl (and installer) output for job events (contract §5).
+// The pattern is written from the real StepRunner output (src/hem/core/runner.py) —
+// in the real output the Step/title/result words are Persian (matched literally by STEP_LINE_RE):
+//   [~] Step N/total — title            ← step started
+//   [✓] Step N/total — title — result   ← ok
+//   [!] Step N/total — title — result   ← needs action
+//   [✗] Step N/total — title — result   ← failed (numbers are ASCII; icons may be colored on a tty → ANSI-strip before parsing)
 
 import type { JobManager } from "./events";
 import type { ParsedInstallStep } from "./types";
 
 const ANSI_RE = /\x1b\[[0-9;]*m/g;
 
-// عنوان گام‌های پرخطر — هم‌ارز ریسک‌های flow.py / cli.py (نصب: packages/headscale/
-// configure/dns_https/firewall/start؛ ارتقا: توقف/نصب). بقیه safe در نظر گرفته می‌شوند.
+// High-risk step titles — equivalent to the risks in flow.py / cli.py (install: packages/headscale/
+// configure/dns_https/firewall/start; update: stop/install). All others are considered safe.
 const RISKY_TITLES = new Set([
   "نصب بسته‌های پایه",
   "دانلود و نصب headscale",
@@ -26,7 +26,7 @@ const RISKY_TITLES = new Set([
 
 const STEP_LINE_RE = /^\[([~✓!✗])\]\s*گام\s+(\d+)\/(\d+)\s*—\s*(.+)$/;
 
-/** تجزیهٔ یک خط خروجی به گام — null یعنی خط گام نیست */
+/** Parse one output line into a step — null means the line is not a step line */
 export function parseStepLine(rawLine: string): ParsedInstallStep | null {
   const line = rawLine.replace(ANSI_RE, "");
   const m = STEP_LINE_RE.exec(line);
@@ -37,7 +37,7 @@ export function parseStepLine(rawLine: string): ParsedInstallStep | null {
   let title = m[4];
   let detail: string | undefined;
   if (icon !== "~") {
-    // خط پایان: «عنوان — نتیجه» (عنوان‌های واقعی هرگز «—» ندارند → اولین وقوع)
+    // Completion line: title — result (real titles never contain an em dash → first occurrence)
     const idx = title.indexOf(" — ");
     if (idx >= 0) {
       detail = title.slice(idx + 3);
@@ -56,8 +56,8 @@ export function parseStepLine(rawLine: string): ParsedInstallStep | null {
   };
 }
 
-// وضعیت‌های نهایی نصب (اصلاح ۴.۴ — برچسب‌های قراردادی 5-b) و پیام‌های ارتقا
-// (اصلاح ۴.۷). رشته‌ها عیناً از src/hem/i18n.py هستند.
+// Install final states (fix 4.4 — contractual labels from 5-b) and update messages
+// (fix 4.7). The strings come verbatim from src/hem/i18n.py.
 const FINAL_STATE_MARKERS: Array<{ label: string; state: string }> = [
   { label: "نصب انجام شد و صحت آن تأیید شد.", state: "verified" },
   { label: "نصب کاملاً موفق است.", state: "full_success" },
@@ -67,15 +67,15 @@ const FINAL_STATE_MARKERS: Array<{ label: string; state: string }> = [
 ];
 
 const UPDATE_STATE_MARKERS: Array<{ label: string; state: string }> = [
-  { label: "کامل شد و سرویس سالم است.", state: "rolled_back" }, // بازگشت به نسخهٔ قبلی (…) کامل شد…
+  { label: "کامل شد و سرویس سالم است.", state: "rolled_back" }, // rollback to the previous version (…) completed…
   { label: "بازگشت به نسخهٔ قبلی هم ناموفق بود!", state: "rollback_failed" },
   { label: "به‌روزرسانی ناموفق بود", state: "failed" },
 ];
 
-/** تشخیص وضعیت نهایی از کل خروجی — null یعنی برچسبی نبود */
+/** Detect the final state from the whole output — null means no marker matched */
 export function detectFinalState(output: string): string | null {
   const lines = output.split("\n");
-  // اول برچسب‌های نصب (اولویت با آخرین خطوط معنادار)
+  // install markers first (the last meaningful lines take priority)
   for (let i = lines.length - 1; i >= 0; i--) {
     const l = lines[i].replace(ANSI_RE, "");
     for (const m of FINAL_STATE_MARKERS) {
@@ -93,7 +93,7 @@ export function detectFinalState(output: string): string | null {
   return null;
 }
 
-/** تقسیم‌کنندهٔ جریان به خطوط کامل (flush برای خط بی‌انتهای آخر) */
+/** Splits a stream into complete lines (flush for a trailing unterminated line) */
 export class LineBuffer {
   private buf = "";
   constructor(private readonly onLine: (line: string) => void) {}
@@ -118,13 +118,13 @@ export interface JobStreamer {
   onStdout: (chunk: string) => void;
   onStderr: (chunk: string) => void;
   flush: () => void;
-  /** گام‌های تجزیه‌شده تا این لحظه */
+  /** Steps parsed so far */
   steps: () => ParsedInstallStep[];
 }
 
 /**
- * پل جریان خروجی فرمان → رویدادهای job:
- *  هر خط → job:log؛ شروع هر گام ([~]) → job:stage؛ پایان هر گام → job:progress.
+ * Bridge from command output stream → job events:
+ *  each line → job:log; step start ([~]) → job:stage; step completion → job:progress.
  */
 export function createJobStreamer(jobs: JobManager, jobId: string): JobStreamer {
   const steps: ParsedInstallStep[] = [];

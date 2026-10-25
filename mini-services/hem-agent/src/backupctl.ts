@@ -1,5 +1,5 @@
-// پشتیبان‌گیری / راستی‌آزمایی / بازیابی (قرارداد §4) — از طریق hsctl واقعی روی سرور.
-// اگر hsctl روی سرور نباشد → NOT_AVAILABLE صادقانه (این قابلیت‌ها پس از نصب اولیه‌اند).
+// Backup / verify / restore (contract §4) — via the real hsctl on the server.
+// If hsctl is not on the server → honest NOT_AVAILABLE (these features exist only after first install).
 
 import { Router, type Request, type Response } from "express";
 import { randomUUID } from "node:crypto";
@@ -29,7 +29,7 @@ export interface MaintenanceDeps {
   jobs: JobManager;
 }
 
-// --- اعتبارسنجی مسیر فایل پشتیبان (بدون متکار/پیمایش مسیر — فقط زیر /var/backups/hem) ---
+// --- Backup file path validation (no metacharacters/path traversal — only under /var/backups/hem) ---
 const BACKUP_BASE = "/var/backups/hem";
 const SEGMENT_RE = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
 
@@ -39,7 +39,7 @@ export function normalizeBackupFile(file: unknown): string {
   }
   const f = file.trim();
   const segments = f.split("/");
-  // هیچ قطعه‌ای نمی‌تواند «..» یا «.» باشد (traversal ممنوع)
+  // No segment may be ".." or "." (traversal forbidden)
   if (segments.some((seg) => seg === ".." || seg === ".")) {
     throw new HemError("VALIDATION_FAILED", "مسیر فایل پشتیبان نمی‌تواند شامل «..» باشد.");
   }
@@ -59,7 +59,7 @@ export function normalizeBackupFile(file: unknown): string {
   return `${BACKUP_BASE}/${f}`;
 }
 
-// --- تجزیهٔ خروجی «hsctl backup list» (print_table: نام  حجم) ---
+// --- Parse "hsctl backup list" output (print_table: name  size) ---
 export function parseBackupList(output: string): BackupEntry[] {
   const entries: BackupEntry[] = [];
   for (const line of output.split("\n")) {
@@ -69,7 +69,7 @@ export function parseBackupList(output: string): BackupEntry[] {
   return entries;
 }
 
-// --- تجزیهٔ خروجی «hsctl backup verify» (per-file از 5-b) ---
+// --- Parse "hsctl backup verify" output (per-file from 5-b) ---
 export function parseBackupVerify(output: string): { ok: boolean; issues: string[] } {
   if (output.includes("پشتیبان معتبر است")) return { ok: true, issues: [] };
   const issues: string[] = [];
@@ -105,7 +105,7 @@ export function createBackupRouter(deps: MaintenanceDeps): Router {
     }),
   );
 
-  // POST /api/s/:sid/backup/create — job استریمی واقعی
+  // POST /api/s/:sid/backup/create — real streaming job
   r.post(
     "/create",
     wrap(async (req, res) => {
@@ -162,7 +162,7 @@ export function createBackupRouter(deps: MaintenanceDeps): Router {
       const file = normalizeBackupFile((req.body ?? {}).file);
       const inv = await resolveHsctl(ctx.ssh, ctx.hsctlPath);
       if (!inv) throw hsctlNotAvailable();
-      // verify خواندن آرشیو است؛ با sudo اجرا می‌شود چون /var/backups/hem ملک root است
+      // verify only reads the archive; it runs with sudo because /var/backups/hem is root-owned
       const sudoMode = ctx.sudoMode ?? (await ctx.refreshSudo().catch(() => "none" as const));
       const invocation = buildSudoInvocation(hsctlCommand(inv, ["backup", "verify", file]), sudoMode, ctx.sudoPassword);
       const run = await ctx.ssh.exec(invocation.cmd, { timeoutMs: 5 * 60_000, stdin: invocation.stdin });
@@ -188,7 +188,7 @@ export function createBackupRouter(deps: MaintenanceDeps): Router {
   return r;
 }
 
-// POST /api/s/:sid/restore {file, confirm:true} — job استریمی واقعی
+// POST /api/s/:sid/restore {file, confirm:true} — real streaming job
 export function createRestoreRouter(deps: MaintenanceDeps): Router {
   const r = Router({ mergeParams: true });
   const sid = (req: Request): string => paramOf(req.params.sid);

@@ -1,4 +1,4 @@
-// profiles.json + known_hosts.json در پوشهٔ خانهٔ agent (0600) — هیچ سری ذخیره نمی‌شود.
+// profiles.json + known_hosts.json in the agent home dir (0600) — no secrets are ever stored.
 
 import * as fs from "node:fs";
 import * as path from "node:path";
@@ -11,7 +11,7 @@ function ensureDir(home: string): void {
   try {
     fs.chmodSync(home, 0o700);
   } catch {
-    /* روی برخی فایل‌سیستم‌ها ممکن نیست */
+    /* not possible on some filesystems */
   }
 }
 
@@ -120,7 +120,7 @@ export class ProfileStore {
   }
 }
 
-/** known_hosts.json — نگاشت «host:port» → اثرانگشت تأییدشده (TOFU) */
+/** known_hosts.json — map host:port → confirmed fingerprint (TOFU) */
 export class KnownHosts {
   private file: string;
 

@@ -1,9 +1,9 @@
-// مقایسهٔ امن توکن (v0.3.1 §4) — timing-safe برای هدر X-HEM-Token و کوکی hem_token.
-// طول متفاوت فوراً false می‌دهد (افشای طول تهدید عملی نیست؛ مقدار هرگز چاپ نمی‌شود).
+// Timing-safe token comparison (v0.3.1 §4) — for the X-HEM-Token header and hem_token cookie.
+// Different lengths return false immediately (length disclosure is not a practical threat; the value is never printed).
 
 import { timingSafeEqual } from "node:crypto";
 
-/** آیا دو رشتهٔ توکن از نظر زمان-ثابت برابرند؟ (طول متفاوت → false) */
+/** Are two token strings equal in constant time? (different length → false) */
 export function timingSafeTokenMatch(provided: string | undefined, expected: string | undefined): boolean {
   if (typeof provided !== "string" || typeof expected !== "string") return false;
   if (provided.length === 0 || expected.length === 0) return false;

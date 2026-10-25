@@ -1,10 +1,10 @@
-// جریان نصب (قرارداد §8) — مخزن پایتون «منبع واحد» است؛ agent فقط:
-//   ۱) مخزن را tar می‌زند و روی سرور بارگذاری/استخراج می‌کند (prepare)
-//   ۲) پاسخ‌ها را اعتبارسنجی و رندر کرده و dry-run واقعی install.sh را اجرا و
-//      خروجی واقعی را تجزیه می‌کند (validate)
-//   ۳) نصب واقعی را با sudo و استریم زندهٔ job اجرا می‌کند (execute)
-//   ۴) state.json سرور را می‌خواند (state)
-// هیچ‌چیز جعلی نیست: خروجی/کد خروج عیناً از hsctl واقعی می‌آید.
+// Install flow (contract §8) — the Python repo is the single source; the agent only:
+//   1) tars the repo and uploads/extracts it on the server (prepare)
+//   2) validates and renders the answers, runs the real install.sh dry-run and
+//      parses its real output (validate)
+//   3) runs the real install with sudo and live job streaming (execute)
+//   4) reads the server state.json (state)
+// Nothing is faked: output/exit code come verbatim from the real hsctl.
 
 import { Router, type Request, type Response } from "express";
 import { randomUUID } from "node:crypto";
@@ -39,10 +39,10 @@ export interface InstallerDeps {
 }
 
 // ---------------------------------------------------------------------------
-// اسکیمای ورودی‌های نصب — «دستی» هم‌گام با منبع واحد نگه داشته می‌شود:
+// Install inputs schema — kept manually in sync with the single source:
 //   examples/hem-install.conf.example + src/hem/installer/answers.py
-// تست test/installer.test.ts کلیدهای فایل نمونه را با این لیست مطابقت می‌دهد
-// تا هر تغییر سمت پایتون بدون به‌روزرسانی agent فوراً قرمز شود.
+// test/installer.test.ts matches the sample file keys against this list so any
+// Python-side change immediately goes red without an agent update.
 // ---------------------------------------------------------------------------
 export const PLAN_INPUTS: PlanInputField[] = [
   {
@@ -151,9 +151,9 @@ export const PLAN_INPUTS: PlanInputField[] = [
 ];
 
 // ---------------------------------------------------------------------------
-// اعتبارسنجی سمت agent — آینهٔ InstallAnswers.validate (answers.py)
+// Agent-side validation — mirror of InstallAnswers.validate (answers.py)
 // ---------------------------------------------------------------------------
-// عین prompts.py (منبع واحد):
+// Identical to prompts.py (single source):
 const FQDN_RE = /^(?=.{1,253}$)(?:[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?\.)+[a-zA-Z]{2,}$/;
 const EMAIL_RE = /^[^@\s]+@[^@\s]+\.[^@\s]+$/;
 const SEMVER_RE = /^\d+\.\d+\.\d+$/;
@@ -162,7 +162,7 @@ const IPV4_RE = /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/;
 function isValidIp(v: string): boolean {
   const m = IPV4_RE.exec(v);
   if (m) return m.slice(1).every((o) => Number(o) <= 255);
-  // IPv6 ساده (فرم کامل/فشرده) — اعتبارسنجی نهایی با نصب‌کننده واقعی است
+  // Simple IPv6 (full/compressed form) — final validation is done by the real installer
   return /^[0-9a-fA-F:]+$/.test(v) && v.includes("::") || /^[0-9a-fA-F]{0,4}(:[0-9a-fA-F]{0,4}){7}$/.test(v);
 }
 
@@ -227,13 +227,13 @@ function firstUserDefault(s: InstallSettings): string {
 }
 
 // ---------------------------------------------------------------------------
-// رندر answers.conf — عیناً قالب کلید‌های examples/hem-install.conf.example
+// Render answers.conf — exactly the key layout of examples/hem-install.conf.example
 // ---------------------------------------------------------------------------
-const YAML_SAFE_SCALAR_RE = /^[A-Za-z0-9_/.][A-Za-z0-9_.@:/-]*$/; // با / شروع شدن مجاز است (مسیرها)
+const YAML_SAFE_SCALAR_RE = /^[A-Za-z0-9_/.][A-Za-z0-9_.@:/-]*$/; // starting with / is allowed (paths)
 
 function yamlScalar(v: string): string {
   if (YAML_SAFE_SCALAR_RE.test(v)) return v;
-  return JSON.stringify(v); // نقل‌قول دوتایی با escape استاندارد
+  return JSON.stringify(v); // double quotes with standard escaping
 }
 
 export function renderAnswersConf(settings: InstallSettings): string {
@@ -266,9 +266,9 @@ export function renderAnswersConf(settings: InstallSettings): string {
     lines.push("cameras:");
     for (const cam of cams) {
       const entries = Object.entries(cam).filter(([, v]) => v !== undefined && v !== null && v !== "");
-      if (entries.length === 0) continue; // مدخل خالی → YAML نامعتبر نسازیم
-      // قالب عیناً مطابق examples/hem-install.conf.example: هر کلید در خط خودش
-      // (نقشهٔ تک‌خطی «- name: x host: y» YAML نامعتبر است — باگ ۶-ب کشف و رفع شد)
+      if (entries.length === 0) continue; // skip empty entry — avoid producing invalid YAML
+      // Layout exactly per examples/hem-install.conf.example: each key on its own line
+      // (a single-line map like - name: x host: y is invalid YAML — bug discovered and fixed in 6-b)
       lines.push(`  - ${entries[0][0]}: ${yamlScalar(String(entries[0][1]))}`);
       for (let i = 1; i < entries.length; i++) {
         lines.push(`    ${entries[i][0]}: ${yamlScalar(String(entries[i][1]))}`);
@@ -279,7 +279,7 @@ export function renderAnswersConf(settings: InstallSettings): string {
 }
 
 // ---------------------------------------------------------------------------
-// ساخت تاربال مخزن (منبع واحد نصب) و بارگذاری روی سرور
+// Build the repo tarball (the single install source) and upload it to the server
 // ---------------------------------------------------------------------------
 const REMOTE_DIR_PREFIX = "/tmp/hem-install-";
 
@@ -289,9 +289,9 @@ export interface RepoPrepareResult {
 }
 
 export async function prepareRepo(ssh: SshSession): Promise<RepoPrepareResult> {
-  // توقف صادقانه «پیش از هر تاربال/آپلودی» (v0.3.1 §1): اگر مخزن نصب‌کننده
-  // در هیچ‌کدام از کاندیدهای زنجیره نبود، هرگز «آماده/موفق» اعلام نمی‌شود —
-  // پیام، همهٔ مسیرهای بررسی‌شده را با نتیجهٔ وجودشان فهرست می‌کند.
+  // Honest stop before any tarball/upload (v0.3.1 §1): if the installer repo is
+  // missing from every candidate in the chain, it is never reported ready/successful —
+  // the message lists every checked path with its existence result.
   const status = installerRootStatus();
   if (!status.ok) {
     throw new HemError("NOT_FOUND", installerRootErrorMessage(status));
@@ -352,13 +352,13 @@ export async function prepareRepo(ssh: SshSession): Promise<RepoPrepareResult> {
 }
 
 // ---------------------------------------------------------------------------
-// روتر §8
+// §8 router
 // ---------------------------------------------------------------------------
 export function createInstallRouter(deps: InstallerDeps): Router {
   const r = Router({ mergeParams: true });
   const sid = (req: Request): string => paramOf(req.params.sid);
 
-  // POST /api/s/:sid/install/prepare — بارگذاری مخزن + اسکیمای ورودی‌ها
+  // POST /api/s/:sid/install/prepare — upload repo + inputs schema
   r.post(
     "/prepare",
     wrap(async (req, res) => {
@@ -374,9 +374,9 @@ export function createInstallRouter(deps: InstallerDeps): Router {
     }),
   );
 
-  // POST /api/s/:sid/install/validate — dry-run واقعی + خروجی/گام‌های تجزیه‌شده
-  // نکته: فلگ --yes مطابق قرارداد 5-a برای عبور از گام «تأیید برنامه» لازم است؛
-  // در dry-run هیچ چیزی اعمال نمی‌شود و این رضایت فقط برای «نمایش برنامه» است.
+  // POST /api/s/:sid/install/validate — real dry-run + parsed output/steps
+  // Note: the --yes flag is required per contract 5-a to pass the confirm-plan step;
+  // in a dry-run nothing is applied and this consent is only for showing the plan.
   r.post(
     "/validate",
     wrap(async (req, res) => {
@@ -396,7 +396,7 @@ export function createInstallRouter(deps: InstallerDeps): Router {
       await ctx.ssh.writeFile(`${remoteDir}/answers.conf`, answers, 30_000);
       const run = await ctx.ssh.exec(
         `cd ${shellQuote(remoteDir)} && bash install.sh --dry-run --config answers.conf --non-interactive --yes`,
-        { timeoutMs: 240_000 }, // بررسی DNS/IP عمومی شبکه می‌تواند کند باشد
+        { timeoutMs: 240_000 }, // public DNS/IP checks over the network can be slow
       );
       const steps: ParsedInstallStep[] = [];
       for (const line of (run.stdout + "\n" + run.stderr).split("\n")) {
@@ -421,7 +421,7 @@ export function createInstallRouter(deps: InstallerDeps): Router {
     }),
   );
 
-  // POST /api/s/:sid/install/execute — نصب واقعی به‌صورت job با استریم زنده
+  // POST /api/s/:sid/install/execute — real install as a live-streamed job
   r.post(
     "/execute",
     wrap(async (req, res) => {
@@ -447,13 +447,13 @@ export function createInstallRouter(deps: InstallerDeps): Router {
         startedAt: Date.now(),
         cancel: () => cancelFn(),
       });
-      // پاسخ فوری؛ ادامهٔ کار در پس‌زمینه با رویدادهای job:*
+      // immediate response; work continues in the background with job:* events
       res.json({ ok: true, jobId });
       void runInstallJob(deps, sid_, ctx, jobId, (settings ?? {}) as InstallSettings, remoteDir, (fn) => (cancelFn = fn));
     }),
   );
 
-  // GET /api/s/:sid/install/state — خواندن /etc/hem/state.json سرور
+  // GET /api/s/:sid/install/state — read the server /etc/hem/state.json
   r.get(
     "/state",
     wrap(async (req, res) => {
@@ -520,7 +520,7 @@ async function runInstallJob(
 
     const streamer = createJobStreamer(jobs, jobId);
     const { result, cancel } = ctx.ssh.execCancellable(invocation.cmd, {
-      timeoutMs: 30 * 60 * 1000, // نصب واقعی (دانلود/نصب بسته) زمان‌بر است
+      timeoutMs: 30 * 60 * 1000, // a real install (package download/install) takes time
       stdin: invocation.stdin,
       onStdout: streamer.onStdout,
       onStderr: streamer.onStderr,
@@ -556,7 +556,7 @@ async function runInstallJob(
     }
     const msg = he ? he.message : `خطای غیرمنتظره در اجرای نصب: ${String((e as Error)?.message ?? e)}`;
     if (he?.code === "SUDO_REQUIRED") {
-      // رفتار صادقانهٔ درست: بدون root/sudo نصب واقعی ممکن نیست — ادعای موفقیت هرگز نیست.
+      // Correct honest behavior: a real install is impossible without root/sudo — success is never claimed.
       log(`✗ ${msg}`, "stderr");
       jobs.jobDone(jobId, false, null, `SUDO_REQUIRED — ${msg}`);
     } else {

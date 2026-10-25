@@ -1,8 +1,8 @@
-// تست جریان نصب (قرارداد §8) — prepare/validate/execute/state روی سرور SSH آزمایشی واقعی.
-// مخزن پایتون واقعی (از زنجیرهٔ حلٔ v0.3.1 §1: HEM_PROJECT_ROOT → installer/ کنار
-// فایل اجرایی → checkout توسعه) بارگذاری می‌شود و dry-run واقعی install.sh اجرا
-// می‌شود — هیچ خروجی جعلی در کار نیست. اجرای واقعی نصب روی سرور تست (بدون sudo)
-// باید صادقانه با SUDO_REQUIRED شکست بخورد؛ این «رفتار درست» است.
+// Install-flow tests (spec §8) — prepare/validate/execute/state against a real SSH test server.
+// The real Python repo (from the v0.3.1 §1 resolution chain: HEM_PROJECT_ROOT → installer/
+// next to the executable → dev checkout) is uploaded and a real install.sh dry-run runs —
+// no fake output involved. A real install on the test server (no sudo) must honestly
+// fail with SUDO_REQUIRED; that IS the "correct behavior".
 import { afterAll, beforeAll, expect, test } from "bun:test";
 import { existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import * as os from "node:os";
@@ -26,7 +26,7 @@ import {
   resolveInstallerRoot,
 } from "../src/config";
 
-// v0.3.1 §1: بدون پیش‌فرضِ توسعه‌دهنده — از زنجیرهٔ حل (env → packaged → dev) می‌آید.
+// v0.3.1 §1: no developer default — it comes from the resolution chain (env → packaged → dev).
 const PROJECT_ROOT = projectRoot();
 const hsPrefix = "/tmp/hs-bin/headscale --config /home/z/hs-test/config.yaml";
 
@@ -51,10 +51,10 @@ const VALID_SETTINGS = {
 
 beforeAll(async () => {
   ensureHeadscaleHealthy();
-  // noShim: سرور هدف «تمیز» است (headscale روی PATH نیست) — جریان نصب تازهٔ ۱۷ گامی
+  // noShim: the target server is "clean" (headscale not on PATH) — the 17-step fresh-install flow
   ts = await startTestServer({ port: 0, noShim: true });
-  stack = buildTestStack({ authMode: "open" }); // v0.3.2 §2: تست منطق کسب‌وکار در استثنای مستندِ توسعه (بدون احراز هویت)
-  srv = await listenStackIo(stack, { authMode: "open" }); // v0.3.2 §2: استثنای مستندِ توسعه
+  stack = buildTestStack({ authMode: "open" }); // v0.3.2 §2: business-logic tests under the documented dev exception (no auth)
+  srv = await listenStackIo(stack, { authMode: "open" }); // v0.3.2 §2: documented dev exception
   sid = await connectAndConfirm(srv.baseUrl, {
     host: TEST_HOST,
     port: ts.port,
@@ -70,11 +70,11 @@ beforeAll(async () => {
 }, 30_000);
 
 afterAll(async () => {
-  // پاک‌سازی واقعی دایرکتوری‌های موقت روی «سرور» ( همان ماشین در محیط تست)
+  // real cleanup of the temp directories on the "server" (the same machine in the test environment)
   try {
     await stack.manager.exec(sid, "rm -rf /tmp/hem-install-*");
   } catch {
-    /* نشست شاید بسته باشد */
+    /* the session may already be closed */
   }
   stack.dispose();
   await srv.close();
@@ -95,9 +95,9 @@ const get = async (path: string): Promise<{ status: number; body: any }> => {
 };
 
 // ---------------------------------------------------------------------------
-// هم‌گامی اسکیما با منبع واحد (examples/hem-install.conf.example)
+// Schema sync with the single source (examples/hem-install.conf.example)
 // ---------------------------------------------------------------------------
-test("اسکیمای ورودی‌های نصب دقیقاً با کلیدهای فایل نمونهٔ Canonical هم‌گام است", () => {
+test("the install-inputs schema is exactly in sync with the Canonical example file's keys", () => {
   const example = readFileSync(`${PROJECT_ROOT}/examples/hem-install.conf.example`, "utf8");
   const exampleKeys = new Set(
     example
@@ -107,23 +107,23 @@ test("اسکیمای ورودی‌های نصب دقیقاً با کلیدهای
   );
   const schemaKeys = new Set(PLAN_INPUTS.map((f) => f.key));
   expect([...schemaKeys].sort()).toEqual([...exampleKeys].sort());
-  // چند کلید حیاتی با enum/برچسب
+  // a few critical keys with enum/label
   const caddy = PLAN_INPUTS.find((f) => f.key === "caddy_mode")!;
   expect(caddy.enum).toEqual(["install", "reuse", "skip"]);
   expect(PLAN_INPUTS.find((f) => f.key === "domain")!.required).toBe(true);
 });
 
-test("validateSettings: caddy_mode نامعتبر → خطای فارسی با مقادیر مجاز", () => {
+test("validateSettings: invalid caddy_mode → Persian error listing the allowed values", () => {
   const errors = validateSettings({ ...VALID_SETTINGS, caddy_mode: "install_new" as never });
   expect(errors.length).toBeGreaterThan(0);
   expect(errors.join(" ")).toContain("install/reuse/skip");
 });
 
-test("validateSettings: تنظیمات معتبر بدون خطا", () => {
+test("validateSettings: valid settings produce no errors", () => {
   expect(validateSettings(VALID_SETTINGS)).toEqual([]);
 });
 
-test("renderAnswersConf: قالب کلیدها عیناً مطابق فایل نمونهٔ Canonical", () => {
+test("renderAnswersConf: the key format exactly matches the Canonical example file", () => {
   const conf = renderAnswersConf(VALID_SETTINGS);
   expect(conf).toContain("non_interactive: true");
   expect(conf).toContain("install_dir: /opt/headscale-easy-manager");
@@ -137,7 +137,7 @@ test("renderAnswersConf: قالب کلیدها عیناً مطابق فایل ن
   expect(conf).toContain("  - 1.1.1.1");
 });
 
-test("parseStepLine: خطوط واقعی خروجی StepRunner (شروع/موفق/شکست)", () => {
+test("parseStepLine: real StepRunner output lines (start/ok/failed)", () => {
   const running = parseStepLine("[~] گام 1/17 — خوش‌آمد و معرفی");
   expect(running).toMatchObject({ stage: 1, total: 17, status: "running", risk: "safe" });
   const ok = parseStepLine("[✓] گام 4/17 — بررسی منابع شبکه (IP عمومی و CGNAT) — IP عمومی: 8.212.10.159");
@@ -146,12 +146,12 @@ test("parseStepLine: خطوط واقعی خروجی StepRunner (شروع/موف�
   const failed = parseStepLine("[✗] گام 8/17 — نمایش برنامه تغییرات و تأیید — در حالت غیرتعاملی، اجرای برنامهٔ تغییرات نیازمند --yes صریح است");
   expect(failed).toMatchObject({ stage: 8, status: "failed" });
   expect(parseStepLine("جمع‌بندی: 17 گام موفق")).toBeNull();
-  // گام پرخطر
+  // a risky step
   const risky = parseStepLine("[~] گام 13/17 — تنظیم فایروال (اول SSH)");
   expect(risky!.risk).toBe("risky");
 });
 
-test("detectFinalState: برچسب‌های قراردادی 5-b", () => {
+test("detectFinalState: the contractual 5-b labels", () => {
   expect(detectFinalState("✅ نصب انجام شد و صحت آن تأیید شد.")).toBe("verified");
   expect(detectFinalState("✅ نصب کاملاً موفق است.")).toBe("full_success");
   expect(detectFinalState("⚠ DNS یا گواهی TLS هنوز آماده نیست.")).toBe("pending_verification");
@@ -165,23 +165,23 @@ test("detectFinalState: برچسب‌های قراردادی 5-b", () => {
 });
 
 // ---------------------------------------------------------------------------
-// prepare — بارگذاری واقعی مخزن
+// prepare — real repo upload
 // ---------------------------------------------------------------------------
 let preparedDir = "";
 
 test(
-  "prepare: تاربال مخزن واقعی ساخته/بارگذاری/استخراج می‌شود",
+  "prepare: the real repo tarball is built/uploaded/extracted",
   async () => {
     const { status, body } = await post("/install/prepare", {});
     expect(status).toBe(200);
     expect(body.ok).toBe(true);
     expect(body.remoteDir).toMatch(/^\/tmp\/hem-install-\d+$/);
-    expect(body.sizeBytes).toBeGreaterThan(100_000); // مخزن واقعی ~۲۰۰KB
+    expect(body.sizeBytes).toBeGreaterThan(100_000); // the real repo is ~200KB
     expect(Array.isArray(body.planInputsSchema)).toBe(true);
     expect(body.planInputsSchema.length).toBe(13);
     preparedDir = body.remoteDir;
 
-    // استخراج واقعاً انجام شده: install.sh و hsctl و src موجودند
+    // the extraction really happened: install.sh, hsctl and src exist
     const check = await stack.manager.exec(sid, `test -f ${preparedDir}/install.sh && test -f ${preparedDir}/hsctl && test -d ${preparedDir}/src/hem`);
     expect(check.code).toBe(0);
     const tarball = await stack.manager.exec(sid, `test -s ${preparedDir}/repo.tar.gz`);
@@ -191,10 +191,10 @@ test(
 );
 
 // ---------------------------------------------------------------------------
-// validate — dry-run واقعی
+// validate — a real dry-run
 // ---------------------------------------------------------------------------
 test(
-  "validate: تنظیمات معتبر → dry-run واقعی با exitCode 0 و ≥۱۰ گام تجزیه‌شده",
+  "validate: valid settings → a real dry-run with exitCode 0 and ≥10 parsed steps",
   async () => {
     const { status, body } = await post("/install/validate", { settings: VALID_SETTINGS, remoteDir: preparedDir });
     expect(status).toBe(200);
@@ -203,21 +203,21 @@ test(
     expect(body.plan.length).toBeGreaterThanOrEqual(10);
     expect(body.plan[0].stage).toBe(1);
     expect(body.finalState).toBe("dry_run_complete");
-    // خروجی واقعی نصب‌کننده (نه ساختگی): نشانگرهای واقعی برنامه‌ریزی
+    // real installer output (not synthetic): real planning markers
     expect(body.output).toContain("گام 1/17");
     expect(body.output).toContain("هیچ تغییری واقعاً اعمال نمی‌شود");
   },
   240_000,
 );
 
-test("validate: بدون remoteDir → 400 راهنما", async () => {
+test("validate: no remoteDir → 400 with guidance", async () => {
   const { status, body } = await post("/install/validate", { settings: VALID_SETTINGS });
   expect(status).toBe(400);
   expect(body.error).toBe("VALIDATION_FAILED");
   expect(body.message).toContain("prepare");
 });
 
-test("validate: caddy_mode نامعتبر → 400 با خطای فارسی (بدون اجرای ریموت)", async () => {
+test("validate: invalid caddy_mode → 400 with a Persian error (no remote execution)", async () => {
   const { status, body } = await post("/install/validate", {
     settings: { ...VALID_SETTINGS, caddy_mode: "install_new" as never },
     remoteDir: preparedDir,
@@ -228,19 +228,19 @@ test("validate: caddy_mode نامعتبر → 400 با خطای فارسی (بد
 });
 
 // ---------------------------------------------------------------------------
-// execute — job صادقانه
+// execute — an honest job
 // ---------------------------------------------------------------------------
-test("execute بدون confirm → NEED_CONFIRM", async () => {
+test("execute without confirm → NEED_CONFIRM", async () => {
   const { status, body } = await post("/install/execute", { settings: VALID_SETTINGS, remoteDir: preparedDir });
   expect(status).toBe(400);
   expect(body.error).toBe("NEED_CONFIRM");
 });
 
 test(
-  "execute روی سرور بدون sudo → شکست صادقانهٔ SUDO_REQUIRED با رویدادهای job (socket.io + REST fallback)",
+  "execute on a server without sudo → honest SUDO_REQUIRED failure with job events (socket.io + REST fallback)",
   async () => {
-    // کلاینت socket.io «قبل» از اجرا وصل است؛ اتاق job را بعد از گرفتن jobId جدا می‌کند —
-    // پنجرهٔ طبیعی: prepare خودکار (~۱ثانیه آپلود) قبل از اولین رویدادهای نصب.
+    // the socket.io client connects "before" execution; it joins the job room after getting jobId —
+    // natural window: the automatic prepare (~1s upload) runs before the first install events.
     const client: Socket = io(srv.baseUrl, { transports: ["websocket"] });
     await new Promise<void>((res) => (client.connected ? res() : client.once("connect", () => res())));
 
@@ -252,7 +252,7 @@ test(
     client.emit("subscribe", `job:${jobId}`);
 
     const done = await new Promise<any>((resolve, reject) => {
-      const timer = setTimeout(() => reject(new Error("job:done در ۹۰ ثانیه نرسید")), 90_000);
+      const timer = setTimeout(() => reject(new Error("job:done did not arrive within 90s")), 90_000);
       client.on("job:done", (payload: any) => {
         if (payload?.jobId === jobId) {
           clearTimeout(timer);
@@ -268,19 +268,19 @@ test(
     });
     client.disconnect();
 
-    // سرور تست sudo ندارد → نصب واقعی باید صادقانه SUDO_REQUIRED شکست بخورد (ادعای موفقیت ممنوع)
+    // the test server has no sudo → the real install must honestly fail with SUDO_REQUIRED (claiming success is forbidden)
     expect(done.ok).toBe(false);
     expect(String(done.summary)).toContain("SUDO_REQUIRED");
 
-    // REST fallback (اتصال دیرهنگام): همهٔ خطوط بافرشده حتی پس از پایان job
+    // REST fallback (late connection): every buffered line even after the job has ended
     const logPage = (await (await fetch(`${srv.baseUrl}/api/jobs/${jobId}/log?since=0`)).json()) as any;
     expect(logPage.ok).toBe(true);
     expect(logPage.logs.length).toBeGreaterThanOrEqual(3);
     const joined = logPage.logs.map((l: any) => l.line).join("\n");
-    expect(joined).toContain("prepare"); // بارگذاری خودکار مخزن اتفاق افتاد
-    expect(joined).toContain("sudo"); // پیام صادقانهٔ SUDO_REQUIRED
+    expect(joined).toContain("prepare"); // the automatic repo upload happened
+    expect(joined).toContain("sudo"); // the honest SUDO_REQUIRED message
 
-    // وضعیت job پس از پایان
+    // the job status after completion
     const jobStatus = (await (await fetch(`${srv.baseUrl}/api/jobs/${jobId}`)).json()) as any;
     expect(jobStatus.ok).toBe(true);
     expect(jobStatus.job.status).toBe("done");
@@ -293,8 +293,8 @@ test(
 // ---------------------------------------------------------------------------
 // state
 // ---------------------------------------------------------------------------
-test("state: بدون نصب → exists:false صادقانه", async () => {
-  expect(existsSync("/etc/hem/state.json")).toBe(false); // پیش‌شرط محیط تست
+test("state: no install → honest exists:false", async () => {
+  expect(existsSync("/etc/hem/state.json")).toBe(false); // test-environment precondition
   const { status, body } = await get("/install/state");
   expect(status).toBe(200);
   expect(body.ok).toBe(true);
@@ -302,18 +302,18 @@ test("state: بدون نصب → exists:false صادقانه", async () => {
 });
 
 // ---------------------------------------------------------------------------
-// v0.3.1 §1 — زنجیرهٔ حلٔ ریشهٔ نصب‌کننده (خالص؛ بدون وابستگی به checkout سندباکس)
+// v0.3.1 §1 — installer-root resolution chain (pure; independent of the sandbox checkout)
 // ---------------------------------------------------------------------------
 const FORBIDDEN_DEV_DEFAULT = "/home/z/my-project/headscale-easy-manager";
 
-/** پوشهٔ موقت با install.sh — کاندید «معتبر» برای env */
+/** Temp folder with an install.sh — a "valid" env candidate */
 function mkValidRoot(): string {
   const d = mkdtempSync(path.join(os.tmpdir(), "hem-valid-root-"));
   writeFileSync(path.join(d, "install.sh"), "#!/bin/bash\n# نشان تست\n");
   return d;
 }
 
-/** پوشهٔ exe ساختگی که installer/ کنارش هست — کاندید packaged معتبر */
+/** Fake exe folder with installer/ next to it — a valid packaged candidate */
 function mkValidExeDir(): string {
   const d = mkdtempSync(path.join(os.tmpdir(), "hem-valid-exe-"));
   mkdirSync(path.join(d, "installer"), { recursive: true });
@@ -321,7 +321,7 @@ function mkValidExeDir(): string {
   return d;
 }
 
-/** checkout ساختگی: <base>/a/b/src + مخزن در <base>/headscale-easy-manager */
+/** Fake checkout: <base>/a/b/src + the repo at <base>/headscale-easy-manager */
 function mkValidSrcDir(): { src: string; repo: string } {
   const base = mkdtempSync(path.join(os.tmpdir(), "hem-valid-src-"));
   const src = path.join(base, "a", "b", "src");
@@ -332,7 +332,7 @@ function mkValidSrcDir(): { src: string; repo: string } {
   return { src, repo };
 }
 
-test("§1: با ورودی‌های تمیز، هیچ کاندیدی مسیر ممنوعِ پیش‌فرضِ توسعه نیست", () => {
+test("§1: with clean inputs, no candidate is the forbidden dev-default path", () => {
   const created: string[] = [];
   try {
     const exe = mkdtempSync(path.join(os.tmpdir(), "hem-clean-exe-"));
@@ -345,11 +345,11 @@ test("§1: با ورودی‌های تمیز، هیچ کاندیدی مسیر م
     const cands = installerRootCandidates(undefined, exe, src);
     expect(cands.map((c) => c.source)).toEqual(["packaged", "dev"]);
     for (const c of cands) {
-      // اگر کسی پیش‌فرض هاردکد را برگرداند، اینجا قرمز می‌شود:
+      // if someone brings back the hardcoded default, this goes red here:
       expect(c.path).not.toBe(FORBIDDEN_DEV_DEFAULT);
       expect(c.path.startsWith("/home/z/")).toBe(false);
     }
-    // env خالی/فقط-فاصله کاندید env نمی‌سازد
+    // empty/whitespace-only env creates no env candidate
     expect(installerRootCandidates("", exe, src).some((c) => c.source === "env")).toBe(false);
     expect(installerRootCandidates("   ", exe, src).some((c) => c.source === "env")).toBe(false);
   } finally {
@@ -357,7 +357,7 @@ test("§1: با ورودی‌های تمیز، هیچ کاندیدی مسیر م
   }
 });
 
-test("§1: اولویت زنجیره — env > packaged > dev؛ نخستین کاندیدِ دارای install.sh برنده است", () => {
+test("§1: chain priority — env > packaged > dev; the first candidate with an install.sh wins", () => {
   const created: string[] = [];
   try {
     const env = mkValidRoot();
@@ -367,25 +367,25 @@ test("§1: اولویت زنجیره — env > packaged > dev؛ نخستین ک�
     const { src, repo } = mkValidSrcDir();
     created.push(repo);
 
-    // هر سه معتبر → env (صریح) برنده است
+    // all three valid → env (explicit) wins
     expect(resolveInstallerRoot(installerRootCandidates(env, exe, src))).toMatchObject({
       ok: true,
       source: "env",
       path: path.resolve(env),
     });
-    // بدون env → packaged (کنار فایل اجرایی)
+    // without env → packaged (next to the executable)
     expect(resolveInstallerRoot(installerRootCandidates(undefined, exe, src))).toMatchObject({
       ok: true,
       source: "packaged",
       path: path.join(exe, "installer"),
     });
-    // env نامعتبر (install.sh نیست) → صادقانه در tried ثبت و پرش به packaged
+    // invalid env (no install.sh) → honestly recorded in tried and skipped to packaged
     const envBad = mkdtempSync(path.join(os.tmpdir(), "hem-bad-env-"));
     created.push(envBad);
     const st = resolveInstallerRoot(installerRootCandidates(envBad, exe, src));
     expect(st.source).toBe("packaged");
     expect(st.tried[0]).toMatchObject({ source: "env", exists: false });
-    // فقط dev معتبر → dev برنده است
+    // only dev valid → dev wins
     const exeBad = mkdtempSync(path.join(os.tmpdir(), "hem-bad-exe-"));
     created.push(exeBad);
     expect(resolveInstallerRoot(installerRootCandidates(undefined, exeBad, src)).source).toBe("dev");
@@ -394,7 +394,7 @@ test("§1: اولویت زنجیره — env > packaged > dev؛ نخستین ک�
   }
 });
 
-test("§1: هیچ کاندید معتبری نیست → source:none و projectRoot همان «انتظارِ packaged» است", () => {
+test("§1: no valid candidate → source:none and projectRoot is the \"packaged expectation\"", () => {
   const created: string[] = [];
   try {
     const envBad = mkdtempSync(path.join(os.tmpdir(), "hem-none-env-"));
@@ -416,14 +416,14 @@ test("§1: هیچ کاندید معتبری نیست → source:none و projectR
       path.join(exeDir, "installer"),
       path.resolve(src, "..", "..", "..", "headscale-easy-manager"),
     ]);
-    // «انتظارِ packaged» — تماس‌گیرنده با همین مسیر خطای واضح می‌گیرد
+    // the "packaged expectation" — the caller gets a clear error with this very path
     expect(st.path).toBe(path.join(exeDir, "installer"));
   } finally {
     for (const d of created) rmSync(d, { recursive: true, force: true });
   }
 });
 
-test("§1: در باینری کامپایل‌شده (/$bunfs) کاندید dev وجود ندارد و پیام دلیل را می‌گوید", () => {
+test("§1: in a compiled binary (/$bunfs) there is no dev candidate and the message says why", () => {
   const cands = installerRootCandidates(undefined, "/opt/fake-exe", "/$bunfs/root/mini-services/hem-agent/src");
   expect(cands.map((c) => c.source)).toEqual(["packaged"]);
   expect(cands[0].path).toBe("/opt/fake-exe/installer");
@@ -431,12 +431,12 @@ test("§1: در باینری کامپایل‌شده (/$bunfs) کاندید dev 
   const msg = installerRootErrorMessage(
     resolveInstallerRoot(cands, [{ source: "dev", reason: "دلیل تست: باینری کامپایل‌شده" }]),
   );
-  expect(msg).toContain("تنظیم نشده"); // env تنظیم نشده
-  expect(msg).toContain("دلیل تست: باینری کامپایل‌شده"); // علت ردشدن dev
+  expect(msg).toContain("تنظیم نشده"); // env not set
+  expect(msg).toContain("دلیل تست: باینری کامپایل‌شده"); // the reason dev was rejected
   expect(msg).toContain("/opt/fake-exe/installer");
 });
 
-test("§1: پیام «مخزن پیدا نشد» همهٔ مسیرها را با نتیجه فهرست می‌کند و راه‌حل می‌دهد", () => {
+test("§1: the \"repo not found\" message lists every path with its result and offers a solution", () => {
   const created: string[] = [];
   try {
     const envBad = mkdtempSync(path.join(os.tmpdir(), "hem-msg-env-"));
@@ -463,7 +463,7 @@ test("§1: پیام «مخزن پیدا نشد» همهٔ مسیرها را با
   }
 });
 
-test("§1 (checkout موجود): زنجیرهٔ واقعی همین اجرا مخزن را پیدا می‌کند و projectRoot معتبر است", () => {
+test("§1 (existing checkout): the real chain finds the repo in this very run and projectRoot is valid", () => {
   const st = installerRootStatus();
   expect(st.ok).toBe(true);
   expect(st.source).not.toBe("none");

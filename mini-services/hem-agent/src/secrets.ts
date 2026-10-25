@@ -1,11 +1,11 @@
-// مخزن اسرار — رمز عبور / passphrase / کلیدهای کامل هرگز در لاگ نوشته نمی‌شوند.
+// Secret store — passwords / passphrases / full keys are never written to logs.
 //
-//  - ویندوز (win32): Windows Credential Manager از طریق PowerShell + WinRT PasswordVault
-//    (کد واقعی است و فقط روی ویندوز اجرا می‌شود).
-//  - سایر پلتفرم‌ها (لینوکس/sandbox): فایل توسعه secrets.json با مجوز 0600 —
-//    این حالت فقط برای توسعه است و صادقانه مستند شده؛ در محصول دسکتاپ ویندوزی از PasswordVault استفاده می‌شود.
+//  - Windows (win32): Windows Credential Manager via PowerShell + WinRT PasswordVault
+//    (real code, runs only on Windows).
+//  - Other platforms (Linux/sandbox): dev secrets.json file with 0600 permissions —
+//    this mode is dev-only and honestly documented; the Windows desktop product uses PasswordVault.
 //
-// سیاست پیش‌فرض: set(persist:false) → راز فقط در حافظهٔ agent می‌ماند.
+// Default policy: set(persist:false) → the secret stays in agent memory only.
 
 import * as fs from "node:fs";
 import * as path from "node:path";
@@ -14,7 +14,7 @@ import { execFileSync } from "node:child_process";
 export type SecretBackend = "windows-vault" | "file" | "memory";
 
 export interface SetSecretOptions {
-  /** پیش‌فرض false — راز فقط در حافظه بماند */
+  /** Default false — keep the secret in memory only */
   persist?: boolean;
 }
 
@@ -24,7 +24,7 @@ function psEscape(s: string): string {
   return s.replace(/'/g, "''");
 }
 
-/** فقط روی ویندوز اجرا می‌شود — PasswordVault با WinRT API */
+/** Runs only on Windows — PasswordVault via the WinRT API */
 function runPowerShell(script: string): string {
   const out = execFileSync("powershell.exe", ["-NoProfile", "-NonInteractive", "-Command", script], {
     encoding: "utf8",
@@ -47,7 +47,7 @@ export class SecretStore {
     fs.mkdirSync(home, { recursive: true });
     this.file = path.join(home, "secrets.json");
     if (!fs.existsSync(this.file)) {
-      // «توسعه»: روی ویندوز از Windows Credential Manager استفاده می‌شود.
+      // Dev mode: on Windows, Windows Credential Manager is used instead.
       fs.writeFileSync(
         this.file,
         JSON.stringify(
@@ -93,7 +93,7 @@ export class SecretStore {
           return v;
         }
       } catch {
-        /* خواندن ناموفق */
+        /* read failed */
       }
     }
     return undefined;
@@ -101,7 +101,7 @@ export class SecretStore {
 
   set(key: string, value: string, opts: SetSecretOptions = {}): void {
     this.memory.set(key, value);
-    if (!opts.persist) return; // سیاست پیش‌فرض: فقط حافظه
+    if (!opts.persist) return; // default policy: memory only
     if (this.backend === "windows-vault") {
       runPowerShell(
         `[void][Windows.Security.Credentials.PasswordVault,Windows.Security.Credentials,ContentType=WindowsRuntime];` +

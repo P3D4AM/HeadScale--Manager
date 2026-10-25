@@ -1,4 +1,4 @@
-// تست آداپتورهای headscale روی باینری واقعی v0.29.5 از طریق سرور SSH آزمایشی (shim)
+// headscale adapter tests against the real v0.29.5 binary via the SSH test server (shim)
 import { afterAll, beforeAll, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import { startTestServer, TEST_HOST, TEST_PASSWORD, type TestServerHandle } from "./server";
@@ -15,7 +15,7 @@ const srvPort = (): number => ts.port;
 beforeAll(async () => {
   ensureHeadscaleHealthy();
   ts = await startTestServer({ port: 0 });
-  stack = buildTestStack({ authMode: "open" }); // v0.3.2 §2: تست منطق کسب‌وکار در استثنای مستندِ توسعه (بدون احراز هویت)
+  stack = buildTestStack({ authMode: "open" }); // v0.3.2 §2: business-logic tests under the documented dev exception (no auth)
   srv = await listenApp(stack.app);
   sid = await connectAndConfirm(srv.baseUrl, {
     host: TEST_HOST,
@@ -50,7 +50,7 @@ const post = async (path: string, body: unknown): Promise<{ status: number; body
   return { status: res.status, body: await res.json() };
 };
 
-test("users list — آرایهٔ JSON واقعی", async () => {
+test("users list — a real JSON array", async () => {
   const { status, body } = await get("/hs/users");
   expect(status).toBe(200);
   const users = (body as { ok: boolean; data: HsUser[] }).data;
@@ -60,7 +60,7 @@ test("users list — آرایهٔ JSON واقعی", async () => {
   expect(users[0].name).toBeTruthy();
 });
 
-test("users create → destroy (با confirm) — چرخهٔ واقعی", async () => {
+test("users create → destroy (with confirm) — a real cycle", async () => {
   const name = `agent-test-${Date.now()}`;
   const created = await post("/hs/users", { name });
   expect(created.status).toBe(200);
@@ -71,21 +71,21 @@ test("users create → destroy (با confirm) — چرخهٔ واقعی", async 
   expect(mine).toBeDefined();
   const id = mine!.id;
 
-  // بدون confirm → NEED_CONFIRM با نام واقعی هدف
+  // without confirm → NEED_CONFIRM with the real target name
   const denied = await post("/hs/users/destroy", { id });
   expect(denied.status).toBe(400);
   const deniedBody = denied.body as { error: string; message: string };
   expect(deniedBody.error).toBe("NEED_CONFIRM");
   expect(deniedBody.message).toContain(name);
 
-  // با confirm → حذف واقعی
+  // with confirm → actually deleted
   const done = await post("/hs/users/destroy", { id, confirm: true });
   expect(done.status).toBe(200);
   const users2 = ((await get("/hs/users")).body as { data: HsUser[] }).data;
   expect(users2.find((u) => u.name === name)).toBeUndefined();
 });
 
-test("preauthkeys: ساخت با کلید کامل یک‌بار + list ماسک‌شده", async () => {
+test("preauthkeys: create with a one-time full key + masked list", async () => {
   const before = ((await get("/hs/preauthkeys")).body as { data: HsPreAuthKey[] }).data;
   const beforeIds = new Set(before.map((k) => k.id));
 
@@ -97,7 +97,7 @@ test("preauthkeys: ساخت با کلید کامل یک‌بار + list ماسک
 
   const after = ((await get("/hs/preauthkeys")).body as { data: HsPreAuthKey[] }).data;
   expect(after.length).toBe(before.length + 1);
-  // همهٔ کلیدهای list ماسک‌اند
+  // every key in the list is masked
   for (const k of after) {
     expect(k.key).toContain("***");
   }
@@ -106,24 +106,24 @@ test("preauthkeys: ساخت با کلید کامل یک‌بار + list ماسک
   expect(newKey!.user.id).toBe(1);
   expect(newKey!.reusable).toBe(true);
 
-  // پاک‌سازی واقعی: انقضای کلید ساخته‌شده
+  // real cleanup: expire the created key
   const expired = await post("/hs/preauthkeys/expire", { id: newKey!.id });
   expect(expired.status).toBe(200);
 
-  // audit هرگز کلید کامل را ندیده است
+  // the audit log has never seen the full key
   const auditText = readFileSync(`${stack.home}/audit.log`, "utf8");
   expect(auditText).not.toContain(keyData.key);
-  // سرِ کلید ماسک‌شده ممکن است شامل خط تیره باشد (مثل hskey-auth-Dhh4--***) — الگو باید [A-Za-z0-9_-] بپذیرد
+  // the head of the masked key may contain a dash (like hskey-auth-Dhh4--***) — the pattern must accept [A-Za-z0-9_-]
   expect(auditText).toMatch(/hskey-auth-[A-Za-z0-9_-]{0,5}-\*\*\*/);
 });
 
-test("policy get → {policy:null} وقتی سیاستی تنظیم نشده", async () => {
+test("policy get → {policy:null} when no policy is set", async () => {
   const { status, body } = await get("/hs/policy");
   expect(status).toBe(200);
   expect((body as { data: { policy: string | null } }).data.policy).toBeNull();
 });
 
-test("apikeys: ساخت (کلید کامل یک‌بار) + list ماسک + انقضا با prefix", async () => {
+test("apikeys: create (one-time full key) + masked list + expire by prefix", async () => {
   const created = await post("/hs/apikeys", { expiration: "1h" });
   expect(created.status).toBe(200);
   const keyData = (created.body as { data: { key: string } }).data;
@@ -133,19 +133,19 @@ test("apikeys: ساخت (کلید کامل یک‌بار) + list ماسک + ان
   expect(list.length).toBeGreaterThan(0);
   const newest = list.reduce((a, b) => (a.id > b.id ? a : b));
   expect(newest.prefix).toContain("***");
-  // prefix واقعی از فرم ماسک‌شده: hskey-api-XXXXX-***
+  // the real prefix from the masked form: hskey-api-XXXXX-***
   const prefix = newest.prefix.replace(/-\*+$/, "");
   expect(prefix).toMatch(/^hskey-api-/);
 
   const expired = await post("/hs/apikeys/expire", { prefix });
   expect(expired.status).toBe(200);
 
-  // audit: کلید کامل هرگز ثبت نشده
+  // audit: the full key was never recorded
   const auditText = readFileSync(`${stack.home}/audit.log`, "utf8");
   expect(auditText).not.toContain(keyData.key);
 });
 
-test("config validate: پیکربندی معتبر و نامعتبر (configtest واقعی)", async () => {
+test("config validate: valid and invalid configuration (a real configtest)", async () => {
   const realConfig = readFileSync("/home/z/hs-test/config.yaml", "utf8");
 
   const valid = await post("/hs/config/validate", { content: realConfig });
@@ -159,7 +159,7 @@ test("config validate: پیکربندی معتبر و نامعتبر (configtest
   expect(typeof invalidBody.error).toBe("string");
 });
 
-test("config get: خواندن پیکربندی واقعی سرور", async () => {
+test("config get: read the server's real configuration", async () => {
   const { status, body } = await get("/hs/config");
   expect(status).toBe(200);
   const data = (body as { data: { content: string; path: string } }).data;
@@ -167,30 +167,30 @@ test("config get: خواندن پیکربندی واقعی سرور", async () =
   expect(data.content).toContain("server_url");
 });
 
-test("version: تجزیهٔ نسخهٔ واقعی", async () => {
+test("version: parse the real version", async () => {
   const { status, body } = await get("/hs/version");
   expect(status).toBe(200);
   expect((body as { data: { version: string } }).data.version).toBe("0.29.5");
 });
 
-test("nodes: list و routes — آرایه (حتی وقتی CLI null می‌دهد)", async () => {
+test("nodes: list and routes — arrays (even when the CLI returns null)", async () => {
   const nodes = ((await get("/hs/nodes")).body as { data: unknown[] }).data;
   expect(Array.isArray(nodes)).toBe(true);
   const routes = ((await get("/hs/nodes/routes")).body as { data: unknown[] }).data;
   expect(Array.isArray(routes)).toBe(true);
 });
 
-test("health سه‌لایه: honest — سرویس (فرایند) + HTTP + CLI", async () => {
+test("three-layer health: honest — service (process) + HTTP + CLI", async () => {
   const { status, body } = await get("/health");
   expect(status).toBe(200);
   const data = (body as { ok: boolean; data: { healthy: boolean; layers: Record<string, { ok: boolean; via: string }> } }).data;
   expect(data.layers.service.via).toBe("process");
-  expect(data.layers.http.ok).toBe(true); // سرور واقعی بالا است
+  expect(data.layers.http.ok).toBe(true); // the real server is up
   expect(data.layers.cli.ok).toBe(true);
   expect(data.healthy).toBe(true);
 });
 
-test("service status headscale: fallback فرایند (systemd نیست)", async () => {
+test("service status headscale: process fallback (no systemd)", async () => {
   const { status, body } = await get("/service/headscale/status");
   expect(status).toBe(200);
   const data = (body as { data: { unit: string; via: string; active: boolean | null } }).data;
@@ -199,7 +199,7 @@ test("service status headscale: fallback فرایند (systemd نیست)", async
   expect(data.active).toBe(true);
 });
 
-test("logs: fallback فایل لاگ سرور آزمایشی", async () => {
+test("logs: test-server log-file fallback", async () => {
   const { status, body } = await get("/logs?unit=headscale&lines=20");
   expect(status).toBe(200);
   const data = (body as { data: { source: string; lines: string[] } }).data;
@@ -207,7 +207,7 @@ test("logs: fallback فایل لاگ سرور آزمایشی", async () => {
   expect(Array.isArray(data.lines)).toBe(true);
 });
 
-test("audit endpoint: رکوردهای اخیر (پاک‌سازی‌شده)", async () => {
+test("audit endpoint: recent records (redacted)", async () => {
   const res = await fetch(`${srv.baseUrl}/api/audit?limit=50`);
   expect(res.status).toBe(200);
   const body = (await res.json()) as { entries: { action: string }[] };

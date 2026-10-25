@@ -1,6 +1,6 @@
-// اجرای مشترکِ فرمان‌های sudo استریمی برای jobها (نصب/پشتیبان/بازیابی/ارتقا).
-//  - sudo فقط از مسیرهای مجاز: root / sudo -n / sudo -S با رمز از stdin (حالت none → SUDO_REQUIRED صادقانه)
-//  - خروجی خط‌به‌خط → job:log / job:stage / job:progress (تجزیهٔ گام‌ها در jobstream.ts)
+// Shared runner for streaming sudo commands in jobs (install/backup/restore/update).
+//  - sudo only via allowed paths: root / sudo -n / sudo -S with password from stdin (none mode → honest SUDO_REQUIRED)
+//  - Line-by-line output → job:log / job:stage / job:progress (step parsing in jobstream.ts)
 
 import { HemError } from "./errors";
 import type { JobManager } from "./events";
@@ -15,14 +15,14 @@ export interface StreamSudoParams {
   jobs: JobManager;
   jobId: string;
   ctx: HsCtx;
-  /** فرمان کامل بدون sudo (خودش quote شده) */
+  /** Full command without sudo (already quoted) */
   command: string;
-  /** خطوط اولیهٔ لاگ قبل از اجرا */
+  /** Initial log lines before execution */
   introLines?: string[];
   timeoutMs?: number;
-  /** دریافت تابع لغو (برای wire کردن به JobManager.register) */
+  /** Receive the cancel function (to wire into JobManager.register) */
   setCancel?: (fn: () => void) => void;
-  /** ساخت خلاصهٔ نهایی (پیش‌فرض: بر اساس کد خروج) */
+  /** Build the final summary (default: based on exit code) */
   summarize?: (code: number | null, steps: ParsedInstallStep[]) => string;
 }
 
@@ -68,13 +68,13 @@ export async function streamSudoCommand(params: StreamSudoParams): Promise<Strea
   return { ok: r.code === 0, exitCode: r.code, finalState, summary, steps };
 }
 
-/** خروجی خطای job به رشتهٔ پیام (برای audit) */
+/** Convert a job error to a message string (for audit) */
 export function jobErrorMessage(e: unknown): string {
   if (e instanceof HemError) return e.message;
   return String((e as Error)?.message ?? e);
 }
 
-/** جزئیات لغو بودن exec (پس از job:cancel) */
+/** Whether an exec failure was a cancellation (after job:cancel) */
 export function isCancelError(e: unknown): boolean {
   return e instanceof HemError && (e.detail as { cancelled?: boolean } | undefined)?.cancelled === true;
 }

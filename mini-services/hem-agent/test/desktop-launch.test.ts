@@ -1,24 +1,24 @@
-// تست‌های رگرسیون «بسته‌شدن سریع EXE» (v0.3.2-beta.2) — دو ریشه:
+// "EXE closes instantly" regression tests (v0.3.2-beta.2) — two root causes:
 //
-//   ریشهٔ الف) اجرای «خالی» بستهٔ ویندوزی (دابل‌کلیک، بدون هیچ متغیر) هرگز
-//   به حالت دسکتاپ نگاشت نمی‌شد → سیاست fail-closed بدرستی exit≠0 می‌داد
-//   → پنجره فوراً بسته می‌شد. اصلاح: قاعدهٔ «بستهٔ ویندوزی» در resolveDesktopMode
-//   (src/config.ts): باینری کامپایل‌شده روی win32 «بدون هیچ توکن/صراحت» =
-//   دسکتاپ با توکن تولیدیِ همان اجرا.
+//   root A) running the Windows package "bare" (double-click, no variables at
+//   all) never mapped to desktop mode → the fail-closed policy rightly gave
+//   exit≠0 → the window closed instantly. Fix: the "Windows package" rule in
+//   resolveDesktopMode (src/config.ts): a compiled binary on win32 with
+//   "no token/explicit setting" = desktop with a token generated for that run.
 //
-//   ریشهٔ ب) هر شکست راه‌اندازی فقط به کنسولِ لحظه‌ای می‌رفت — شاهدی باقی
-//   نمی‌ماند (و اگر پورت اشغال بود، کلاً unhandled می‌مرد). اصلاح: لاگ
-//   تشخیصی فایل‌محور (src/startuplog.ts) + هندلر خطای listen (EADDRINUSE)
-//   در index.ts.
+//   root B) every startup failure only went to the momentary console — no
+//   evidence remained (and if the port was taken, it died completely unhandled).
+//   Fix: a file-based diagnostic log (src/startuplog.ts) + a listen error
+//   handler (EADDRINUSE) in index.ts.
 //
-// لایه‌ها:
-//   A) سیاست خالص — resolveDesktopMode/resolveAuthPlan بدون I/O (قفل ریشهٔ الف)
-//   B) فرایند واقعی (روی میزبانِ لینوکسی — قفل ریشهٔ ب و رفتار fail-closed):
-//      اجرای خالی → exit≠0 + پیام + لاگ فایل؛ اشغال پورت → EADDRINUSE + لاگ؛
-//      اجرای موفق دسکتاپ → لاگ فایل «بدون توکن».
-//   مسیر «قاعدهٔ بستهٔ ویندوزی» (خودِ win32+compiled) فقط روی ویندوز واقعی/
-//   CI ویندوزی اجرا می‌شود — اینجا با تست‌های خالصِ لایهٔ A پوشش داده شده
-//   و صادقانه در همان تست‌ها یادداشت شده است.
+// Layers:
+//   A) pure policy — resolveDesktopMode/resolveAuthPlan without I/O (locks root A)
+//   B) real process (on a Linux host — locks root B and fail-closed behavior):
+//      bare run → exit≠0 + message + file log; busy port → EADDRINUSE + log;
+//      a successful desktop run → a file log "without the token".
+//   The "Windows package" rule path (actual win32+compiled) only runs on real
+//   Windows / Windows CI — here it is covered by the pure layer-A tests and
+//   honestly noted in those same tests.
 
 import { afterAll, expect, test } from "bun:test";
 import { spawn, type ChildProcess } from "node:child_process";
@@ -42,7 +42,7 @@ function freePort(): Promise<number> {
   });
 }
 
-/** محیط تمیز برای فرایند: متغیرهای HEM_* والد حذف می‌شوند تا تست‌ها مستقل باشند */
+/** Clean environment for the child process: parent HEM_* variables are dropped so tests stay independent */
 function cleanEnv(overrides: Record<string, string>): Record<string, string> {
   const env: Record<string, string> = {};
   for (const [k, v] of Object.entries(process.env)) {
@@ -68,17 +68,17 @@ function runExpectExit(env: Record<string, string>, expectInOutput: string[], ti
     child.stderr?.on("data", (d: Buffer) => (output += d.toString()));
     const timer = setTimeout(() => {
       child.kill("SIGKILL");
-      reject(new Error(`فرایند در ${timeoutMs}ms خارج نشد. خروجی:\n${output}`));
+      reject(new Error(`process did not exit within ${timeoutMs}ms. Output:\n${output}`));
     }, timeoutMs);
     child.on("exit", (code) => {
       clearTimeout(timer);
       if (code === null) {
-        reject(new Error("فرایند با سیگنال کشته شد"));
+        reject(new Error("process was killed by a signal"));
         return;
       }
       for (const needle of expectInOutput) {
         if (!output.includes(needle)) {
-          reject(new Error(`«${needle}» در خروجی نیست:\n${output}`));
+          reject(new Error(`"${needle}" not found in output:\n${output}`));
           return;
         }
       }
@@ -97,56 +97,56 @@ function killServerChild(c: ChildProcess): void {
 }
 
 // ===========================================================================
-// A) سیاست خالص — قاعدهٔ «بستهٔ ویندوزی» (قفل ریشهٔ الف؛ بدون I/O)
-//    یادداشت صادقانه: خودِ مسیر win32+compiled فقط روی ویندوز واقعی/CI ویندوزی
-//    «اجرا» می‌شود؛ منطقش همین‌جا با ورودی ساختگی قفل شده است.
+// A) pure policy — the "Windows package" rule (locks root A; no I/O)
+//    Honest note: the actual win32+compiled path only "runs" on real Windows /
+//    Windows CI; its logic is locked right here with synthetic inputs.
 // ===========================================================================
 
-test("A1 قاعدهٔ بستهٔ ویندوزی: win32 + compiled + بدون توکن/صراحت → دسکتاپ", () => {
+test("A1 Windows-package rule: win32 + compiled + no token/explicit setting → desktop", () => {
   expect(
     resolveDesktopMode({ platform: "win32", compiledBinary: true, env: {}, argv: [] }),
   ).toBe(true);
 });
 
-test("A2 صراحت کاربر برنده است: همان اجرا + HEM_AGENT_TOKEN → دسکتاپ خودکار خاموش (سرویس)", () => {
+test("A2 the user's explicit setting wins: same run + HEM_AGENT_TOKEN → auto-desktop off (service)", () => {
   expect(
     resolveDesktopMode({ platform: "win32", compiledBinary: true, env: { HEM_AGENT_TOKEN: "t" }, argv: [] }),
   ).toBe(false);
 });
 
-test("A3 صراحت کاربر برنده است: همان اجرا + HEM_AGENT_AUTH → دسکتاپ خودکار خاموش", () => {
+test("A3 the user's explicit setting wins: same run + HEM_AGENT_AUTH → auto-desktop off", () => {
   expect(
     resolveDesktopMode({ platform: "win32", compiledBinary: true, env: { HEM_AGENT_AUTH: "open" }, argv: [] }),
   ).toBe(false);
 });
 
-test("A4 لینوکس: باینری کامپایل‌شده + اجرای خالی → دسکتاپ خودکار نیست (قفل fail-closed می‌ماند)", () => {
+test("A4 Linux: compiled binary + bare run → no auto-desktop (the fail-closed lock stays)", () => {
   expect(
     resolveDesktopMode({ platform: "linux", compiledBinary: true, env: {}, argv: [] }),
   ).toBe(false);
 });
 
-test("A5 اجرای توسعه (bun، نه باینری): win32 + خالی → دسکتاپ خودکار نیست", () => {
+test("A5 dev run (bun, not a binary): win32 + bare → no auto-desktop", () => {
   expect(
     resolveDesktopMode({ platform: "win32", compiledBinary: false, env: {}, argv: [] }),
   ).toBe(false);
 });
 
-test("A6 صریحِ قدیمی: HEM_DESKTOP=1 روی هر پلتفرم → دسکتاپ", () => {
+test("A6 legacy explicit: HEM_DESKTOP=1 on any platform → desktop", () => {
   expect(resolveDesktopMode({ platform: "linux", compiledBinary: false, env: { HEM_DESKTOP: "1" }, argv: [] })).toBe(true);
 });
 
-test("A7 صریحِ قدیمی: --desktop → دسکتاپ", () => {
+test("A7 legacy explicit: --desktop → desktop", () => {
   expect(resolveDesktopMode({ platform: "linux", compiledBinary: true, env: {}, argv: ["bun", "index.ts", "--desktop"] })).toBe(true);
 });
 
-test("A8 مقدارهای خالی/فاصله‌ای توکن یا صراحت حساب نمی‌شوند (قاعدهٔ خودکار می‌گیرد)", () => {
+test("A8 empty/whitespace token or auth values don't count (the auto rule applies)", () => {
   expect(
     resolveDesktopMode({ platform: "win32", compiledBinary: true, env: { HEM_AGENT_TOKEN: "  ", HEM_AGENT_AUTH: "" }, argv: [] }),
   ).toBe(true);
 });
 
-test("A9 ترکیب با سیاست احراز هویت: دسکتاپِ بستهٔ ویندوزی بدون توکن → token تولیدی (نه AUTH_NOT_CONFIGURED)", () => {
+test("A9 combined with the auth policy: Windows-package desktop without a token → generated token (not AUTH_NOT_CONFIGURED)", () => {
   const desktop = resolveDesktopMode({ platform: "win32", compiledBinary: true, env: {}, argv: [] });
   expect(desktop).toBe(true);
   const r = resolveAuthPlan({ auth: undefined, token: undefined, desktop });
@@ -157,7 +157,7 @@ test("A9 ترکیب با سیاست احراز هویت: دسکتاپِ بسته
   }
 });
 
-test("A10 ترکیب: HEM_AGENT_AUTH=open روی بستهٔ ویندوزی → دسکتاپ خودکار خاموش + حالت open (انتخاب کاربر محترم)", () => {
+test("A10 combined: HEM_AGENT_AUTH=open on the Windows package → auto-desktop off + open mode (user choice respected)", () => {
   const desktop = resolveDesktopMode({ platform: "win32", compiledBinary: true, env: { HEM_AGENT_AUTH: "open" }, argv: [] });
   expect(desktop).toBe(false);
   const r = resolveAuthPlan({ auth: "open", token: undefined, desktop });
@@ -166,20 +166,20 @@ test("A10 ترکیب: HEM_AGENT_AUTH=open روی بستهٔ ویندوزی → �
 });
 
 // ===========================================================================
-// B) فرایند واقعی — ریشهٔ ب: شکست‌ها شاهدِ فایل‌محور دارند
-//    (روی میزبان لینوکسی؛ این تست‌ها سیستمعامل-مستقل‌اند)
+// B) real process — root B: failures leave file-based evidence
+//    (on a Linux host; these tests are OS-independent)
 // ===========================================================================
 
-test("B1 اجرای خالی: exit≠0 + پیام فارسی + «لاگ فایل» با رکورد fatal (شاهد از بین نمی‌رود)", async () => {
+test("B1 bare run: exit≠0 + Persian message + file log with a fatal record (evidence survives)", async () => {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), "hem-b1-"));
   const port = await freePort();
   const r = await runExpectExit(
     cleanEnv({ HEM_AGENT_PORT: String(port), HEM_AGENT_HOME: home }),
-    ["AUTH_NOT_CONFIGURED", "شروع نمی‌شود", "logs/hem-agent.log"],
+    ["AUTH_NOT_CONFIGURED", "refuses to start", "logs/hem-agent.log"],
   );
   expect(r.exitCode).not.toBe(0);
   expect(r.exitCode).not.toBe(null);
-  // لاگ فایل: مسیر مشخص + رکوردهای JSONL با ts/phase/code
+  // file log: a known path + JSONL records with ts/phase/code
   const logPath = path.join(home, "logs", "hem-agent.log");
   expect(fs.existsSync(logPath)).toBe(true);
   const entries = readStartupEntries(logPath);
@@ -193,7 +193,7 @@ test("B1 اجرای خالی: exit≠0 + پیام فارسی + «لاگ فایل
   expect(begin).toBeDefined();
 }, 30_000);
 
-test("B2 پورت اشغال (دو نمونه): نمونهٔ دوم EADDRINUSE + پیام فارسی + لاگ فایل — نه unhandled crash", async () => {
+test("B2 busy port (two instances): the second gets EADDRINUSE + Persian message + file log — not an unhandled crash", async () => {
   const port = await freePort();
   const home1 = fs.mkdtempSync(path.join(os.tmpdir(), "hem-b2a-"));
   const home2 = fs.mkdtempSync(path.join(os.tmpdir(), "hem-b2b-"));
@@ -205,24 +205,24 @@ test("B2 پورت اشغال (دو نمونه): نمونهٔ دوم EADDRINUSE +
   child1.stdout?.on("data", (d: Buffer) => (out1 += d.toString()));
   child1.stderr?.on("data", (d: Buffer) => (out1 += d.toString()));
   try {
-    // نمونهٔ ۱ باید واقعاً listen کند پیش از نمونهٔ ۲
+    // instance 1 must actually listen before instance 2
     const deadline = Date.now() + 30_000;
     for (;;) {
-      if (child1.exitCode !== null) throw new Error(`نمونهٔ ۱ مرد (exit=${child1.exitCode}). خروجی:\n${out1}`);
+      if (child1.exitCode !== null) throw new Error(`instance 1 died (exit=${child1.exitCode}). Output:\n${out1}`);
       try {
         const r = await fetch(`http://127.0.0.1:${port}/api/health`, { signal: AbortSignal.timeout(2000) });
         if (r.status === 200) break;
       } catch {
-        /* هنوز بالا نیامده */
+        /* not up yet */
       }
-      if (Date.now() > deadline) throw new Error(`نمونهٔ ۱ در ۳۰ ثانیه بالا نیامد. خروجی:\n${out1}`);
+      if (Date.now() > deadline) throw new Error(`instance 1 did not come up within 30s. Output:\n${out1}`);
       await new Promise((res) => setTimeout(res, 300));
     }
 
-    // نمونهٔ ۲: همان پورت — باید صادقانه EADDRINUSE بدهد (نه crash بی‌شاهد)
+    // instance 2: same port — must honestly return EADDRINUSE (not a crash without evidence)
     const r2 = await runExpectExit(
       cleanEnv({ HEM_AGENT_PORT: String(port), HEM_AGENT_TOKEN: "b2-token-0123456789abcdef", HEM_AGENT_HOME: home2 }),
-      ["EADDRINUSE", "گوش‌دادن", "logs/hem-agent.log"],
+      ["EADDRINUSE", "Listening on", "logs/hem-agent.log"],
     );
     expect(r2.exitCode).not.toBe(0);
     expect(r2.output).toContain("HEM_AGENT_PORT");
@@ -237,7 +237,7 @@ test("B2 پورت اشغال (دو نمونه): نمونهٔ دوم EADDRINUSE +
   }
 }, 60_000);
 
-test("B3 اجرای موفق دسکتاپ: لاگ فایل نوشته می‌شود ولی «توکن» هرگز در آن نیست", async () => {
+test("B3 successful desktop run: the file log is written but the \"token\" is never in it", async () => {
   const port = await freePort();
   const home = fs.mkdtempSync(path.join(os.tmpdir(), "hem-b3-"));
   const child = spawn(process.execPath, [path.join(AGENT_DIR, "index.ts"), "--desktop"], {
@@ -250,28 +250,28 @@ test("B3 اجرای موفق دسکتاپ: لاگ فایل نوشته می‌ش�
   try {
     const deadline = Date.now() + 30_000;
     for (;;) {
-      if (child.exitCode !== null) throw new Error(`فرایند مرد (exit=${child.exitCode}). خروجی:\n${output}`);
+      if (child.exitCode !== null) throw new Error(`process died (exit=${child.exitCode}). Output:\n${output}`);
       try {
         const r = await fetch(`http://127.0.0.1:${port}/api/health`, { signal: AbortSignal.timeout(2000) });
         if (r.status === 200) break;
       } catch {
-        /* هنوز بالا نیامده */
+        /* not up yet */
       }
-      if (Date.now() > deadline) throw new Error(`سرو در ۳۰ ثانیه بالا نیامد. خروجی:\n${output}`);
+      if (Date.now() > deadline) throw new Error(`server did not come up within 30s. Output:\n${output}`);
       await new Promise((res) => setTimeout(res, 300));
     }
 
-    // توکن فقط از خط «desktop UI:» (کنسول) قابل استخراج است
+    // the token can only be extracted from the "desktop UI:" line (console)
     const m = /desktop UI: http:\/\/127\.0\.0\.1:\d+\/\?token=([0-9a-f]{24,})/.exec(output);
-    if (!m) throw new Error(`توکن دسکتاپ در خروجی نیست:\n${output}`);
+    if (!m) throw new Error(`desktop token not found in output:\n${output}`);
     const dtok = m[1]!;
 
-    // لاگ فایل: موجود + رخدادهای راه‌اندازی — و «بدون هیچ توکن»
+    // file log: exists + startup events — and "without any token"
     const logPath = path.join(home, "logs", "hem-agent.log");
     expect(fs.existsSync(logPath)).toBe(true);
     const logText = fs.readFileSync(logPath, "utf8");
     expect(logText).not.toContain(dtok);
-    expect(/[0-9a-f]{48}/.test(logText)).toBe(false); // هیچ توکن ۲۴بایتیِ هگز در فایل نیست
+    expect(/[0-9a-f]{48}/.test(logText)).toBe(false); // no 24-byte hex token in the file
     const entries = readStartupEntries(logPath);
     expect(entries.some((e) => e.phase === "startup" && e.event === "begin")).toBe(true);
     expect(entries.some((e) => e.phase === "auth" && e.event === "resolved" && e.code === "token")).toBe(true);
@@ -281,27 +281,27 @@ test("B3 اجرای موفق دسکتاپ: لاگ فایل نوشته می‌ش�
   }
 }, 60_000);
 
-test("B4 واحد startuplog: redaction (token=***) و چرخش حجم", () => {
-  // از createStartupLog مستقیم — بدون spawn
+test("B4 startuplog unit: redaction (token=***) and size rotation", () => {
+  // use createStartupLog directly — no spawn
   const home = fs.mkdtempSync(path.join(os.tmpdir(), "hem-b4-"));
   const redactor = new Redactor();
   const slog = createStartupLog(home, redactor);
   slog.event("startup", "begin", { detail: "x" });
-  slog.fatal("TEST_CODE", "خطا با نشانی http://127.0.0.1:1/?token=abcdef0123456789 در پیام", new Error("boom"));
+  slog.fatal("TEST_CODE", "error with address http://127.0.0.1:1/?token=abcdef0123456789 in the message", new Error("boom"));
   expect(slog.hasFatal()).toBe(true);
   const entries = readStartupEntries(slog.logPath);
   const fatal = entries.find((e) => e.phase === "fatal" && e.code === "TEST_CODE");
   expect(fatal).toBeDefined();
-  expect(fatal?.detail).toContain("token=***"); // مقدار توکن در لاگ ماسک می‌شود
+  expect(fatal?.detail).toContain("token=***"); // the token value is masked in the log
   expect(fatal?.detail).not.toContain("abcdef0123456789");
   expect(typeof fatal?.stack === "string").toBe(true);
   expect(fatal?.stack).toContain("boom");
-  // چرخش حجم: از سقف ۲۵۶KB که بگذرد، فایل فعلی به *.log.1 منتقل و فایل تازه شروع می‌شود
+  // size rotation: once past the 256KB cap, the current file moves to *.log.1 and a fresh file starts
   const big = "x".repeat(4096);
   for (let i = 0; i < 80; i++) slog.event("rotation", "fill", { detail: big });
   const size = fs.statSync(slog.logPath).size;
-  expect(size).toBeLessThan(256 * 1024 + 64 * 1024); // فایلِ جوان
-  expect(fs.existsSync(`${slog.logPath}.1`)).toBe(true); // نسل قبل باقی مانده
+  expect(size).toBeLessThan(256 * 1024 + 64 * 1024); // young file
+  expect(fs.existsSync(`${slog.logPath}.1`)).toBe(true); // the previous generation remains
 });
 
 afterAll(() => {

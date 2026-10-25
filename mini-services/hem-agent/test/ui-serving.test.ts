@@ -1,11 +1,11 @@
-// تست‌های سروِ UI استاتیک و صفحهٔ خطای روشن — regression باگ ویندوزی v0.3.1:
-// «اجرای EXE و بازکردن نشانی UI به‌جای رابط گرافیکی، JSON سلامت نشان می‌داد».
+// Static-UI serving and clear-error-page tests — regression for the v0.3.1 Windows bug:
+// "running the EXE and opening the UI address showed the health JSON instead of the GUI".
 //
-// قرارداد v0.3.2:
-//   • ui/ موجود  → GET / و مسیرهای SPA = 200 text/html با محتوای واقعی UI
-//                  (پس از تبادل یک‌بارمصرف ?token= → 303 + کوکی، همان مسیر HTML می‌دهد)
-//   • ui/ غایب   → GET / = 503 text/html «صفحهٔ خطای روشن فارسی» — هرگز JSON مبهم
-//   • /api/health = همیشه JSON صحیح (مستقل از UI — با سرو اصلی اشتباه نشود)
+// The v0.3.2 contract:
+//   • ui/ present → GET / and SPA routes = 200 text/html with the real UI content
+//                  (after the one-time ?token= exchange → 303 + cookie, the same route serves HTML)
+//   • ui/ absent  → GET / = 503 text/html "clear Persian error page" — never the ambiguous JSON
+//   • /api/health = always correct JSON (independent of the UI — not confused with serving it)
 
 import { afterAll, beforeAll, expect, test } from "bun:test";
 import * as fs from "node:fs";
@@ -27,7 +27,7 @@ function makeUiDir(): string {
 }
 
 // ---------------------------------------------------------------------------
-// حالت ۱: ui/ موجود — سرو واقعی UI
+// case 1: ui/ present — really serving the UI
 // ---------------------------------------------------------------------------
 let okStack: TestStack;
 let okSrv: ListeningServer;
@@ -41,7 +41,7 @@ afterAll(() => {
   okStack.dispose();
 });
 
-test("UI موجود: GET / (با کوکی جلسه‌ای) → 200 text/html با محتوای واقعی UI (نه JSON)", async () => {
+test("UI present: GET / (with the session cookie) → 200 text/html with the real UI content (not JSON)", async () => {
   const r = await fetch(`${okSrv.baseUrl}/`, { headers: { Cookie: `hem_token=${TOKEN}` } });
   expect(r.status).toBe(200);
   expect((r.headers.get("content-type") ?? "").toLowerCase()).toContain("text/html");
@@ -49,19 +49,19 @@ test("UI موجود: GET / (با کوکی جلسه‌ای) → 200 text/html ب�
   expect(body).toContain('lang="fa"');
   expect(body).toContain(UI_MARKER);
   expect(body).toContain("Headscale Easy Manager");
-  // دقیقاً ضدِ باگ: JSON مبهم هرگز در پاسخ UI نیست
+  // exactly against the bug: the ambiguous JSON is never in the UI response
   expect(body).not.toContain('"service":"hem-agent"');
 });
 
-test("UI موجود: تبادل یک‌بارمصرف GET /?token= → 303 + Set-Cookie؛ سپس GET / همان مسیر HTML می‌دهد (ترتیب middleware)", async () => {
-  // اپ تازه تا بودجهٔ یک‌بارمصرف مستقل باشد
+test("UI present: one-time GET /?token= exchange → 303 + Set-Cookie; then GET / serves HTML on the same route (middleware order)", async () => {
+  // a fresh app so the one-time budget stays independent
   const st = buildTestStack({ token: TOKEN, uiDir: makeUiDir() });
   const srv = await listenApp(st.app);
   try {
     const r1 = await fetch(`${srv.baseUrl}/?token=${encodeURIComponent(TOKEN)}`, { redirect: "manual" });
     expect(r1.status).toBe(303);
     expect(r1.headers.get("set-cookie") ?? "").toContain("hem_token=");
-    // همان GET / — این بار با کوکی — باید رابط HTML بدهد (نه JSON سلامت)
+    // the same GET / — now with the cookie — must serve the HTML UI (not the health JSON)
     const r2 = await fetch(`${srv.baseUrl}/`, { headers: { Cookie: `hem_token=${TOKEN}` } });
     expect(r2.status).toBe(200);
     expect((r2.headers.get("content-type") ?? "").toLowerCase()).toContain("text/html");
@@ -71,7 +71,7 @@ test("UI موجود: تبادل یک‌بارمصرف GET /?token= → 303 + Set
   }
 });
 
-test("UI موجود: fallback SPA → مسیر ناشناخته هم index.html می‌گیرد (text/html + no-store)", async () => {
+test("UI present: SPA fallback → an unknown route also gets index.html (text/html + no-store)", async () => {
   const r = await fetch(`${okSrv.baseUrl}/route/nashnakhte/xyz`, { headers: { Cookie: `hem_token=${TOKEN}` } });
   expect(r.status).toBe(200);
   expect((r.headers.get("content-type") ?? "").toLowerCase()).toContain("text/html");
@@ -79,13 +79,13 @@ test("UI موجود: fallback SPA → مسیر ناشناخته هم index.html 
   expect((r.headers.get("cache-control") ?? "").toLowerCase()).toContain("no-store");
 });
 
-test("UI موجود: asset استاتیک با mime درست (css → text/css)", async () => {
+test("UI present: a static asset with the right mime (css → text/css)", async () => {
   const r = await fetch(`${okSrv.baseUrl}/style.css`, { headers: { Cookie: `hem_token=${TOKEN}` } });
   expect(r.status).toBe(200);
   expect((r.headers.get("content-type") ?? "").toLowerCase()).toContain("text/css");
 });
 
-test("UI موجود: /api/health همچنان JSON صحیح است (با سرو UI اشتباه نمی‌شود)", async () => {
+test("UI present: /api/health is still correct JSON (not confused with serving the UI)", async () => {
   const r = await fetch(`${okSrv.baseUrl}/api/health`, { headers: { "X-HEM-Token": TOKEN } });
   expect(r.status).toBe(200);
   expect((r.headers.get("content-type") ?? "").toLowerCase()).toContain("application/json");
@@ -96,13 +96,13 @@ test("UI موجود: /api/health همچنان JSON صحیح است (با سرو 
 });
 
 // ---------------------------------------------------------------------------
-// حالت ۲: ui/ غایب — صفحهٔ خطای روشن، هرگز JSON مبهم (قلب باگ v0.3.1)
+// case 2: ui/ absent — the clear error page, never the ambiguous JSON (the heart of the v0.3.1 bug)
 // ---------------------------------------------------------------------------
 let missingStack: TestStack;
 let missingSrv: ListeningServer;
 
 beforeAll(async () => {
-  const expected = path.join(tmpHome("hem-noui-"), "ui"); // وجود ندارد
+  const expected = path.join(tmpHome("hem-noui-"), "ui"); // does not exist
   missingStack = buildTestStack({ token: TOKEN, uiDir: path.join(tmpHome("hem-noui-"), "ui-nonexistent"), uiDirExpected: expected });
   missingSrv = await listenApp(missingStack.app);
 });
@@ -111,32 +111,32 @@ afterAll(() => {
   missingStack.dispose();
 });
 
-test("UI غایب: GET / → 503 text/html صفحهٔ خطای «روشن» فارسی — نه JSON مبهم (regression باگ)", async () => {
+test("UI absent: GET / → 503 text/html \"clear\" Persian error page — not the ambiguous JSON (bug regression)", async () => {
   const r = await fetch(`${missingSrv.baseUrl}/`, { headers: { Cookie: `hem_token=${TOKEN}` } });
   expect(r.status).toBe(503);
   expect((r.headers.get("content-type") ?? "").toLowerCase()).toContain("text/html");
   const body = await r.text();
   expect(body).toContain('lang="fa"');
-  expect(body).toContain("فایل‌های رابط کاربری پیدا نشد"); // پیام روشن
-  // دقیقاً ضدِ باگ: پاسخ UI هرگز JSON مبهم نیست
+  expect(body).toContain("فایل‌های رابط کاربری پیدا نشد"); // the clear message
+  // exactly against the bug: the UI response is never the ambiguous JSON
   expect(body).not.toContain('"service":"hem-agent"');
   expect(body).not.toContain('"ok":true');
 });
 
-test("UI غایب: صفحهٔ خطا «مسیر مورد انتظار» را می‌گوید (قابل تشخیص برای کاربر)", async () => {
+test("UI absent: the error page states the \"expected path\" (recognizable for the user)", async () => {
   const r = await fetch(`${missingSrv.baseUrl}/`, { headers: { Cookie: `hem_token=${TOKEN}` } });
   const body = await r.text();
-  expect(body).toContain(path.join(path.sep, "ui").replace(/\\/g, path.sep)); // .../ui در پیام
+  expect(body).toContain(path.join(path.sep, "ui").replace(/\\/g, path.sep)); // .../ui in the message
   expect(body).toContain("راه‌حل");
 });
 
-test("UI غایب: مسیر ناشناخته هم همان صفحهٔ خطا را می‌گیرد (نه 404 خام/JSON)", async () => {
+test("UI absent: an unknown route also gets the same error page (not a raw 404/JSON)", async () => {
   const r = await fetch(`${missingSrv.baseUrl}/whatever/deep/path`, { headers: { Cookie: `hem_token=${TOKEN}` } });
   expect(r.status).toBe(503);
   expect((r.headers.get("content-type") ?? "").toLowerCase()).toContain("text/html");
 });
 
-test("UI غایب اما /api/health همچنان JSON صحیح می‌دهد — سلامت سرو با UI جداست", async () => {
+test("UI absent but /api/health still gives correct JSON — service health is separate from the UI", async () => {
   const r = await fetch(`${missingSrv.baseUrl}/api/health`, { headers: { "X-HEM-Token": TOKEN } });
   expect(r.status).toBe(200);
   expect((r.headers.get("content-type") ?? "").toLowerCase()).toContain("application/json");
@@ -145,7 +145,7 @@ test("UI غایب اما /api/health همچنان JSON صحیح می‌دهد �
   expect(body.service).toBe("hem-agent");
 });
 
-test("UI غایب: تبادل یک‌بارمصرف توکن همچنان کار می‌کند (303 + کوکی؛ ریدایرکت به صفحهٔ خطای روشن)", async () => {
+test("UI absent: the one-time token exchange still works (303 + cookie; redirect to the clear error page)", async () => {
   const st = buildTestStack({ token: TOKEN, uiDirExpected: path.join(tmpHome("hem-noui2-"), "ui") });
   const srv = await listenApp(st.app);
   try {

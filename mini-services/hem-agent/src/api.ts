@@ -1,6 +1,6 @@
-// همهٔ مسیرهای REST (قرارداد §4) — پاسخ‌ها واقعی، خطاها تایپ‌شده با پیام فارسی.
-// بخش‌های نصب (§8)/کنسول (§9)/پشتیبان/بازیابی/ارتقا: روترهای واقعی Task 5-d
-// (src/installer.ts، src/console.ts، src/backupctl.ts، src/updatectl.ts).
+// All REST routes (contract §4) — real responses, typed errors with Persian messages (browser UI).
+// Install (§8) / console (§9) / backup/restore/update sections: real Task 5-d routers
+// (src/installer.ts, src/console.ts, src/backupctl.ts, src/updatectl.ts).
 
 import express, { type Express, type NextFunction, type Request, type Response } from "express";
 import * as fs from "node:fs";
@@ -60,21 +60,21 @@ export interface AppDeps {
   audit: AuditLogger;
   redactor: Redactor;
   jobs: JobManager;
-  /** توکن فعال (حالت token) — undefined یعنی بدون توکن */
+  /** Active token (token mode) — undefined means no token */
   token?: string;
   /**
-   * سیاست احراز هویت (v0.3.2 §2):
-   *   • "token" (یا تنظیم‌نشده با توکن موجود) → /api و WebSocket احراز هویت می‌خواهند؛
-   *   • "open" → استثنای مستندِ توسعهٔ محلی (loopback) — بدون احراز هویت؛
-   *   • بدون توکن و بدون authMode → «قفل»: /api فقط health عمومیِ حداقلی را
-   *     می‌دهد و بقیه 503 AUTH_NOT_CONFIGURED (fail-closed، defense-in-depth).
-   * index.ts در حالت قفل اصلاً بالا نمی‌آید؛ این رفتار برای فراخوانی مستقیم
-   * createApp (تست‌ها) و اطمینان لایه‌ای است.
+   * Auth policy (v0.3.2 §2):
+   *   • "token" (or unset with a token present) → /api and WebSocket require authentication;
+   *   • "open" → the documented local-dev exception (loopback) — no authentication;
+   *   • No token and no authMode → "locked": /api serves only the minimal public health
+   *     and everything else returns 503 AUTH_NOT_CONFIGURED (fail-closed, defense-in-depth).
+   * index.ts never starts at all in the locked state; this behavior is for direct
+   * createApp calls (tests) and as an extra layer of assurance.
    */
   authMode?: AgentAuthMode;
-  /** پوشهٔ UI استاتیک — فقط وقتی سرو می‌شود که واقعاً موجود باشد */
+  /** Static UI directory — only served when it actually exists */
   uiDir?: string;
-  /** مسیری که ui/ در آن «جست‌وجو شده» — برای پیام خطای روشن وقتی UI نیست */
+  /** The path where ui/ was looked up — for a clear error message when the UI is missing */
   uiDirExpected?: string;
   version: string;
   startedAt: number;
@@ -101,7 +101,7 @@ export function createApp(deps: AppDeps): Express {
   app.disable("x-powered-by");
   app.use(express.json({ limit: "4mb" }));
 
-  // --- CORS: فقط بدون Origin (curl) یا localhost/127.0.0.1 (توسعه) ---
+  // --- CORS: only no Origin (curl) or localhost/127.0.0.1 (dev) ---
   app.use((req, res, next) => {
     const origin = req.headers.origin as string | undefined;
     if (origin && !ALLOWED_ORIGIN_RE.test(origin)) {
@@ -122,15 +122,15 @@ export function createApp(deps: AppDeps): Express {
     next();
   });
 
-  // --- احراز هویت /api (v0.3.2 §2 — fail-closed) ---------------------------
-  // ترتیب تصمیم:
-  //   ۱) حالت open (استثنای مستندِ توسعهٔ محلی — loopback) → عبور؛
-  //   ۲) توکن فعال و معتبر (هدر X-HEM-Token یا کوکی hem_token) → عبور؛
-  //   ۳) استثنای عمومیِ صریح و محدود: فقط «GET /api/health» با اطلاعات غیرحساس
-  //      (پاسخ حداقلی ok/service/version — بقیهٔ فیلدها فقط برای درخواست معتبر)؛
-  //   ۴) توکن فعال ولی درخواست بی‌توکن/نادرست → 401؛
-  //   ۵) هیچ توکنی نیست و open هم نیست → 503 AUTH_NOT_CONFIGURED (قفل).
-  // توکن هرگز از query پذیرفته نمی‌شود (تبادل یک‌بارمصرف فقط برای مسیرهای UI است).
+  // --- /api authentication (v0.3.2 §2 — fail-closed) ---------------------------
+  // Decision order:
+  //   1) open mode (documented local-dev exception — loopback) → pass;
+  //   2) an active valid token (X-HEM-Token header or hem_token cookie) → pass;
+  //   3) the explicit, narrow public exception: only GET /api/health with non-sensitive data
+  //      (minimal ok/service/version response — extra fields only for authenticated requests);
+  //   4) an active token but an unauthenticated/invalid request → 401;
+  //   5) no token at all and no open → 503 AUTH_NOT_CONFIGURED (locked).
+  // The token is never accepted from the query (the one-time exchange is for UI paths only).
   const authMode: AgentAuthMode | "locked" = deps.authMode ?? (deps.token ? "token" : "locked");
   app.use("/api", (req, res, next) => {
     if (authMode === "open") {
@@ -158,14 +158,14 @@ export function createApp(deps: AppDeps): Express {
     res.status(401).json({ ok: false, error: "UNAUTHORIZED", message: "هدر X-HEM-Token موجود یا معتبر نیست." });
   });
 
-  // ── تبادل یک‌بارمصرف ?token= → کوکی جلسه‌ای (v0.3.1 §4) ──────────────────
-  // نشت توکن در URL/لاگ/تاریخچهٔ مرورگر: مقدار ?token فقط «یک بار» قابل
-  // تبادل است — پس از اولین استفاده، لینک‌های قدیمی (تاریخچهٔ مرورگر/لاگ‌ها)
-  // دیگر هیچ کوکی‌ای نمی‌سازند. تبادل فقط روی مسیرهای UI انجام می‌شود، نه
-  // /api (احراز هویت API فقط هدر/کوکی است؛ token در query هیچ‌وقت معتبر نیست).
-  // کوکی «جلسه‌ای» است (بدون Max-Age؛ با بستن مرورگر می‌میرد)، HttpOnly و
-  // SameSite=Strict. پس از تبادل، 303 به همان مسیر «بدون token» می‌فرستیم
-  // (نوار آدرس تمیز می‌شود؛ پارامترهای دیگر کوئری مثل XTransformPort حفظ می‌شوند).
+  // ── One-time ?token= exchange → session cookie (v0.3.1 §4) ──────────────────
+  // Token leak via URL/logs/browser history: the ?token value can be exchanged
+  // only once — after first use, old links (browser history/logs) never mint
+  // a cookie again. The exchange happens on UI paths only, never /api
+  // (API auth is header/cookie only; a query token is never valid).
+  // The cookie is session-scoped (no Max-Age; it dies with the browser), HttpOnly and
+  // SameSite=Strict. After the exchange we 303 to the same path without the token
+  // (the address bar is cleaned; other query params such as XTransformPort are preserved).
   let bootstrapConsumed = false;
   if (deps.token && deps.token.length > 0) {
     app.use((req, res, next) => {
@@ -180,8 +180,8 @@ export function createApp(deps: AppDeps): Express {
         bootstrapConsumed ||
         !timingSafeTokenMatch(provided, deps.token)
       ) {
-        // مقدار نادرست یا مصرف‌شده: نادیده گرفته می‌شود — کوکی جعلی ساخته
-        // نمی‌شود؛ درخواست‌های بعدی بدون توکن معتبر همان 401 می‌گیرند.
+        // Wrong or already-consumed value: ignored — no cookie is minted;
+        // subsequent requests without a valid token still get 401.
         next();
         return;
       }
@@ -200,9 +200,9 @@ export function createApp(deps: AppDeps): Express {
 
 
   // ------------------------------------------------------------------ health
-  // مسیر عمومیِ صریح و محدود (v0.3.2 §2): پاسخ «حداقلیِ غیرحساس» برای همه؛
-  // فیلدهای تکمیلی (uptime/platform/sessions) فقط برای درخواست‌های احراز‌هویت‌شده
-  // (توکن معتبر یا حالت open). هیچ اطلاعات مدیریتی در آن نیست.
+  // The explicit, narrow public route (v0.3.2 §2): a minimal, non-sensitive response for everyone;
+  // extra fields (uptime/platform/sessions) only for authenticated requests
+  // (valid token or open mode). No administrative info in it.
   app.get("/api/health", (req, res) => {
     const authed =
       authMode === "open" || (!!deps.token && requestTokenMatches(req, deps.token));
@@ -233,7 +233,7 @@ export function createApp(deps: AppDeps): Express {
     "/api/profiles",
     wrap(async (req, res) => {
       const body = req.body ?? {};
-      // رمز اختیاری — پیش‌فرض ذخیره نمی‌شود (فقط حافظه) مگر saveSecret:true
+      // Optional secret — not persisted by default (memory only) unless saveSecret:true
       const { secret, saveSecret, ...profileInput } = body;
       const created = deps.profiles.create(profileInput);
       if (typeof secret === "string" && secret.length > 0) {
@@ -595,7 +595,7 @@ export function createApp(deps: AppDeps): Express {
         expiration: typeof expiration === "string" ? expiration : undefined,
         tags: Array.isArray(tags) ? tags.map(String) : [],
       });
-      // audit فقط نسخهٔ ماسک را می‌بیند
+      // audit only ever sees the masked version
       deps.audit.log({
         sessionId: sidOf(req),
         action: "hs_preauthkeys_create",
@@ -771,7 +771,7 @@ export function createApp(deps: AppDeps): Express {
   app.use(
     "/api/s/:sid",
     (req, _res, next) => {
-      // بررسی وجود نشست برای همهٔ مسیرهای s/ (جزئیات در hsContext/requireConnected)
+      // session existence check for all s/ routes (details in hsContext/requireConnected)
       void req;
       next();
     },
@@ -811,10 +811,10 @@ export function createApp(deps: AppDeps): Express {
     res.status(404).json({ ok: false, error: "NOT_FOUND", message: `مسیر ${req.method} ${req.path} یافت نشد.` });
   });
 
-  // ------------------------------------------------------------------ UI استاتیک
-  // (موجود) — assetها + fallback SPA؛ (غایب) — صفحهٔ خطای روشن فارسی، هرگز JSON مبهم.
-  // ترتیب مهم است: تبادل یک‌بارمصرف ?token= (بالا) «قبل از» این بخش است، پس
-  // GET /?token=… ابتدا 303+کوکی می‌دهد و سپس همان GET / اینجا index.html می‌گیرد.
+  // ------------------------------------------------------------------ static UI
+  // (present) — assets + SPA fallback; (missing) — a clear Persian error page, never ambiguous JSON.
+  // Order matters: the one-time ?token= exchange (above) comes before this section, so
+  // GET /?token=… first gets 303+cookie and then the same GET / receives index.html here.
   const uiMissingPage = uiMissingErrorPage(deps.uiDirExpected ?? deps.uiDir);
   if (deps.uiDir && fs.existsSync(deps.uiDir)) {
     const indexFile = path.join(deps.uiDir, "index.html");
@@ -832,13 +832,13 @@ export function createApp(deps: AppDeps): Express {
       next();
     });
   }
-  // UI در دسترس نیست (یا index.html داخلش نیست) — پاسخ «روشـن»، نه JSON مبهم:
-  // کاربر در مرورگر صفحهٔ فارسی با علت + مسیر مورد انتظار + راه‌حل می‌بیند و
-  // همین رخداد در لاگ سرور هم ثبت می‌شود. /api/health همچنان JSON است (بالاتر).
+  // UI unavailable (or index.html missing inside it) — an explicit response, not ambiguous JSON:
+  // the browser user sees a Persian page with the cause + expected path + fix, and the
+  // same event is recorded in the server log. /api/health is still JSON (above).
   app.use((req, res) => {
-    // v0.3.2 §2 (سناریو۷): URL ثبت‌شده در لاگ «همیشه» از redactor می‌گذرد تا
-    // مقدار ?token= (لینک بوت‌استرپ بازیابی‌شده از تاریخچهٔ مرورگر) هرگز در
-    // لاگ سرور افشا نشود — تست security-auth همین رفتار را قفل می‌کند.
+    // v0.3.2 §2 (scenario 7): the URL written to the log always goes through the redactor so
+    // the ?token= value (a bootstrap link replayed from browser history) is never leaked
+    // into the server log — the security-auth test locks this behavior in.
     console.error(
       `[hem-agent] UI not available: ${req.method} ${deps.redactor.redactText(req.originalUrl)} → 503 error page (expected ui/ at: ${deps.uiDirExpected ?? deps.uiDir ?? "?"})`,
     );
@@ -847,7 +847,7 @@ export function createApp(deps: AppDeps): Express {
     res.type("html").send(uiMissingPage);
   });
 
-  // ------------------------------------------------------------------ خطای مرکزی
+  // ------------------------------------------------------------------ central error handler
   app.use((err: unknown, _req: Request, res: Response, _next: NextFunction) => {
     if (process.env.HEM_AGENT_DEBUG) console.error("[hem-agent][error-handler]", err);
     const he = err instanceof HemError ? err : null;
@@ -860,7 +860,7 @@ export function createApp(deps: AppDeps): Express {
       });
       return;
     }
-    // خطای JSON بدنه
+    // JSON body error
     const anyErr = err as { type?: string; message?: string; status?: number } | null;
     if (anyErr && (anyErr.type === "entity.parse.failed" || anyErr.status === 400)) {
       res.status(400).json({ ok: false, error: "VALIDATION_FAILED", message: "بدنهٔ JSON درخواست نامعتبر است." });
@@ -878,19 +878,19 @@ export function createApp(deps: AppDeps): Express {
 }
 
 function maskProfileSecrets(p: unknown): unknown {
-  // پروفایل‌ها از ابتدا سری ندارند — فقط مطمئن می‌شویم چیزی شبیه رمز برگشته نباشد
+  // Profiles never carry secrets — just make sure nothing password-like is returned
   return p;
 }
 
-/** escape ساده برای نمایش مسیر داخل HTML صفحهٔ خطا */
+/** Simple escape for rendering a path inside the error-page HTML */
 function escapeHtml(s: string): string {
   return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
 }
 
 /**
- * صفحهٔ خطای «فایل‌های UI پیدا نشد» — v0.3.2: جایگزین JSON مبهمی که در باگ
- * ویندوزی به کاربر نمایش داده می‌شد. علت + مسیر مورد انتظار + راه‌حل، فارسی/RTL.
- * مسیرِ مورد انتظار (پوشهٔ کاربر خودش است) نمایش داده می‌شود — هیچ دادهٔ حساسی نیست.
+ * "UI files not found" error page — v0.3.2: replaces the ambiguous JSON shown to users
+ * in the Windows bug. Cause + expected path + fix, in Persian/RTL.
+ * The expected path (the user own folder) is shown — it is not sensitive data.
  */
 function uiMissingErrorPage(expectedUiDir?: string): string {
   const where = expectedUiDir ? escapeHtml(expectedUiDir) : "کنار فایل اجرایی برنامه";
@@ -928,15 +928,15 @@ function uiMissingErrorPage(expectedUiDir?: string): string {
 }
 
 /**
- * استثنای عمومیِ صریح و محدود (v0.3.2 §2): فقط «GET /api/health» بدون احراز هویت
- * پاسخِ حداقلی غیرحساس می‌گیرد. دقیقاً همین مسیر و همین متد — نه چیز دیگری.
- * (تست security-auth این «محدود بودن» را قفل می‌کند.)
+ * The explicit, narrow public exception (v0.3.2 §2): only GET /api/health gets an
+ * unauthenticated minimal, non-sensitive response. Exactly this route and method — nothing else.
+ * (The security-auth test locks this narrowness in.)
  */
 function isPublicHealthRequest(req: Request): boolean {
   return req.method === "GET" && req.path === "/health";
 }
 
-/** توکن درخواست: هدر X-HEM-Token یا کوکی hem_token — با توکن مورد انتظار یکی است؟ (timing-safe) */
+/** Request token: X-HEM-Token header or hem_token cookie — does it match the expected token? (timing-safe) */
 function requestTokenMatches(req: Request, expected: string): boolean {
   const header = req.headers["x-hem-token"];
   const headerVal = Array.isArray(header) ? header[0] : header;

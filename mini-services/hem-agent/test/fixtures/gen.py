@@ -1,14 +1,14 @@
 #!/usr/bin/env python3
-"""تولید فیکسچرهای کلید SSH برای تست‌های hem-agent (فقط تست).
+"""Generate SSH key fixtures for hem-agent tests (test-only).
 
-استفاده:
+Usage:
     /home/z/.venv/bin/python3 test/fixtures/gen.py
 
-خروجی‌ها (همه فقط برای تست؛ هرگز در محصول استفاده نشوند):
-  - id_ed25519 / id_ed25519.pub        — کلید OpenSSH بدون passphrase
-  - id_ed25519_pass / id_ed25519_pass.pub — کلید OpenSSH با passphrase «test-pass»
-  - id_rsa / id_rsa.pub                — کلید RSA PKCS#1 PEM
-  - keys.json                          — رمز/عبارت عبور آزمایشی برای تست‌ها
+Outputs (all test-only; never use them in production):
+  - id_ed25519 / id_ed25519.pub        — OpenSSH key without a passphrase
+  - id_ed25519_pass / id_ed25519_pass.pub — OpenSSH key with the passphrase "test-pass"
+  - id_rsa / id_rsa.pub                — RSA PKCS#1 PEM key
+  - keys.json                          — test password/passphrase for the tests
 """
 
 import json
@@ -46,7 +46,7 @@ def write_rsa() -> None:
     key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
     priv = key.private_bytes(
         serialization.Encoding.PEM,
-        serialization.PrivateFormat.TraditionalOpenSSL,  # PKCS#1 «BEGIN RSA PRIVATE KEY»
+        serialization.PrivateFormat.TraditionalOpenSSL,  # PKCS#1 "BEGIN RSA PRIVATE KEY"
         serialization.NoEncryption(),
     )
     pub = key.public_key().public_bytes(

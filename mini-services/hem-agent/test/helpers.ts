@@ -1,4 +1,4 @@
-// ابزارهای مشترک تست‌ها — هر تست home موقت خودش را دارد تا فایل‌های واقعی آلوده نشوند.
+// Shared test utilities — each test gets its own temp home so real files stay untouched.
 
 import * as fs from "node:fs";
 import * as os from "node:os";
@@ -32,13 +32,13 @@ export interface TestStack {
 }
 
 export interface BuildStackOpts {
-  /** توکن اختیاری X-HEM-Token — برای تست‌های احراز هویت (v0.3.1 §4) */
+  /** Optional X-HEM-Token — for auth tests (v0.3.1 §4) */
   token?: string;
-  /** سیاست احراز هویت صریح (v0.3.2 §2): "open" = استثنای توسعهٔ محلی؛ undefined = از token استنتاج می‌شود */
+  /** Explicit auth policy (v0.3.2 §2): "open" = local-dev exception; undefined = inferred from token */
   authMode?: AgentAuthMode;
-  /** پوشهٔ UI واقعی (باید موجود باشد تا سرو شود) — پیش‌فرض: مسیر ناموجود */
+  /** Real UI dir (must exist to be served) — default: a non-existent path */
   uiDir?: string;
-  /** مسیر مورد انتظار UI برای صفحهٔ خطا (v0.3.2) — پیش‌فرض: همان uiDir */
+  /** Expected UI path for the error page (v0.3.2) — default: same as uiDir */
   uiDirExpected?: string;
 }
 
@@ -99,9 +99,9 @@ export async function listenApp(app: Express): Promise<ListeningServer> {
   });
 }
 
-/** سرور HTTP + socket.io وصل به همان پورت (برای تست‌های رویداد job)
- *  token اختیاری → احراز هویت WS مثل حالت دسکتاپ (v0.3.1 §4)؛
- *  authMode (v0.3.2 §2): "open" = استثنای توسعهٔ محلی، undefined = استنتاج از token */
+/** HTTP + socket.io server attached to the same port (for job-event tests)
+ *  optional token → WS auth like the desktop case (v0.3.1 §4);
+ *  authMode (v0.3.2 §2): "open" = local-dev exception, undefined = inferred from token */
 export async function listenStackIo(
   stack: TestStack,
   opts: { token?: string; authMode?: AgentAuthMode } = {},
@@ -118,7 +118,7 @@ export async function listenStackIo(
         baseUrl: `http://127.0.0.1:${port}`,
         close: () =>
           new Promise<void>((res) => {
-            // اول socket.io (کلاینت‌ها) بسته می‌شود، بعد HTTP؛ با مهلت محافظ تا تست هنگ نکند
+            // close socket.io (clients) first, then HTTP; with a safety timeout so the test never hangs
             let done = false;
             const finish = () => {
               if (!done) {
@@ -152,7 +152,7 @@ export interface ResponseLike {
   json: () => Promise<unknown>;
 }
 
-/** اتصال کامل (fingerprint + confirm) از طریق API — برمی‌گرداند sessionId */
+/** Full connect (fingerprint + confirm) via the API — returns the sessionId */
 export async function connectAndConfirm(
   baseUrl: string,
   inline: Record<string, unknown>,
@@ -179,12 +179,12 @@ export async function connectAndConfirm(
   return c2.sessionId;
 }
 
-/** اطمینان از سلامت سرور headscale واقعی — در صورت مرگ، ری‌استارت */
+/** Ensure the real headscale server is healthy — restart it if it died */
 export function ensureHeadscaleHealthy(): void {
   try {
     execFileSync("curl", ["-s", "-m", "3", "http://127.0.0.1:8080/health"], { encoding: "utf8" });
   } catch {
-    // ری‌استارت سرور آزمایشی (setsid — بدون وابستگی به شل والد)
+    // restart the test server (setsid — no dependency on the parent shell)
     try {
       execFileSync(
         "bash",
@@ -195,9 +195,9 @@ export function ensureHeadscaleHealthy(): void {
         { timeout: 5_000 },
       );
     } catch {
-      /* تلاش شد */
+      /* tried */
     }
-    // چند ثانیه مهلت برای بالا آمدن
+    // give it a few seconds to come up
     for (let i = 0; i < 30; i++) {
       try {
         const out = execFileSync("curl", ["-s", "-m", "2", "http://127.0.0.1:8080/health"], {
@@ -205,10 +205,10 @@ export function ensureHeadscaleHealthy(): void {
         });
         if (out.includes("pass")) return;
       } catch {
-        /* دوباره تلاش */
+        /* retry */
       }
       execFileSync("sleep", ["0.5"]);
     }
-    throw new Error("سرور headscale آزمایشی بالا نیامد");
+    throw new Error("test headscale server did not come up");
   }
 }

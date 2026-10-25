@@ -1,22 +1,23 @@
-﻿# حذف «مدیر آسان هداسکیل» — فقط برنامهٔ خودِ ویندوز؛ سرور و داده‌های شما دست‌نخورده می‌مانند.
-# اجرا:  powershell -ExecutionPolicy Bypass -File .\uninstall.ps1
+﻿# Headscale Easy Manager - Windows uninstaller
+# Removes only the Windows app; your server and its data are never touched.
+# Run:  powershell -ExecutionPolicy Bypass -File .\uninstall.ps1
 $ErrorActionPreference = 'SilentlyContinue'
 $dest = Join-Path $env:LOCALAPPDATA 'HeadscaleEasyManager'
 
-# ۱) میانبرها
+# 1) Shortcuts
 $desktop   = [Environment]::GetFolderPath('Desktop')
 $startMenu = Join-Path $env:APPDATA 'Microsoft\Windows\Start Menu\Programs'
 Remove-Item (Join-Path $desktop 'Headscale Easy Manager.lnk') -Force
 Remove-Item (Join-Path $startMenu 'Headscale Easy Manager.lnk') -Force
 
-# ۲) بستن برنامهٔ در حال اجرا
+# 2) Stop the running app
 Get-Process hem-manager | Stop-Process -Force
 
-# ۳) حذف پوشه (اگر فایل هنوز قفل بود، حذف با چند ثانیه تأخیر)
+# 3) Remove the folder (retry via cmd after a few seconds if files are still locked)
 if (Test-Path $dest) {
   Remove-Item $dest -Recurse -Force
   if (Test-Path $dest) {
     Start-Process cmd -WindowStyle Hidden -ArgumentList "/c timeout /t 3 /nobreak >nul & rd /s /q `"$dest`""
   }
 }
-Write-Host 'برنامه حذف شد. (حذف برنامهٔ ویندوزی هیچ چیزی روی سرور شما تغییر نمی‌دهد.)' -ForegroundColor Green
+Write-Host 'Uninstalled. (Removing the Windows app changes nothing on your server.)' -ForegroundColor Green

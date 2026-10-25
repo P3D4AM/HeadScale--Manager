@@ -1,21 +1,21 @@
-// تست‌های امنیتی واقعی (v0.3.2 §2) — مستقل از پیاده‌سازی؛ «رفتار امنیتی مورد
-// انتظار» را قفل می‌کنند. اگر این تست‌ها به دلیل نقص طراحی شکست بخورند، کد
-// اصلاح می‌شود — هرگز خود تست‌ها حذف/تضعیف نمی‌شوند.
+// Real security tests (v0.3.2 §2) — implementation-independent; they lock the
+// "expected security behavior". If these tests fail due to a design flaw, the
+// code gets fixed — the tests themselves are never removed/weakened.
 //
-// پوشش سناریوهای الزامی:
-//   ۱) درخواست API بدون توکن در حالتِ توکنِ فعال
-//   ۲) درخواست API با توکن معتبر و نامعتبر
-//   ۳) حالت توکنِ تنظیم‌نشده (قفل — هرگز «باز» نیست)
-//   ۴) تلاش برای bind به آدرس غیر loopback بدون تنظیمات امنیتی
-//   ۵) رفتار HTTP و WebSocket در «همهٔ» حالت‌های بالا (هم‌ارز و سازگار)
-//   ۶) مسیرهای عمومی و Health Check (صریح و محدود)
-//   ۷) توکن در Logها و پاسخ‌های غیرضروری افشا نمی‌شود
+// Coverage of the mandatory scenarios:
+//   1) an API request without a token while a token is active
+//   2) an API request with a valid and an invalid token
+//   3) the unset-token mode (locked — never "open")
+//   4) attempting to bind a non-loopback address without security settings
+//   5) HTTP and WebSocket behavior in ALL of the above modes (equivalent and consistent)
+//   6) public routes and the Health Check (explicit and narrow)
+//   7) the token is never leaked into logs or unnecessary responses
 //
-// سه لایهٔ مستقل:
-//   A) سیاست خالص (resolveAuthPlan/isLoopbackHost — بدون I/O)
-//   B) رفتار HTTP/WS از طریق createApp/attachEvents (مثل اجرای واقعی)
-//   C) «فرایند واقعی»: spawn خودِ bun index.ts — رد شدنِ شروع، هشدار آدرس
-//      شبکه‌ای، و اجرای کامل دسکتاپ با توکن تولیدی + عدم نشت در audit.log
+// Three independent layers:
+//   A) pure policy (resolveAuthPlan/isLoopbackHost — no I/O)
+//   B) HTTP/WS behavior via createApp/attachEvents (like a real run)
+//   C) "real process": spawning bun index.ts itself — refused startup, network
+//      address warning, and a full desktop run with a generated token + no leak into audit.log
 
 import { afterAll, expect, test } from "bun:test";
 import { spawn, type ChildProcess } from "node:child_process";
@@ -31,7 +31,7 @@ const TOKEN = "security-test-0123456789abcdef0123456789";
 const WRONG = "wrong-token-value-000000";
 
 // ---------------------------------------------------------------------------
-// ابزارهای مشترک
+// shared utilities
 // ---------------------------------------------------------------------------
 function freePort(): Promise<number> {
   return new Promise((resolve) => {
@@ -44,16 +44,16 @@ function freePort(): Promise<number> {
 }
 
 // ===========================================================================
-// A) سیاست خالص — resolveAuthPlan + isLoopbackHost
+// A) pure policy — resolveAuthPlan + isLoopbackHost
 // ===========================================================================
 
-test("A1 سیاست: بدون توکن و بدون صراحت → رد (AUTH_NOT_CONFIGURED) — هرگز «باز» نیست", () => {
+test("A1 policy: no token and no explicit setting → rejected (AUTH_NOT_CONFIGURED) — never \"open\"", () => {
   const r = resolveAuthPlan({ auth: undefined, token: undefined, desktop: false });
   expect(r.ok).toBe(false);
   if (!r.ok) expect(r.code).toBe("AUTH_NOT_CONFIGURED");
 });
 
-test("A2 سیاست: توکن صریح → حالت token، تولیدی نیست", () => {
+test("A2 policy: an explicit token → token mode, not generated", () => {
   const r = resolveAuthPlan({ auth: undefined, token: TOKEN, desktop: false });
   expect(r.ok).toBe(true);
   if (r.ok) {
@@ -63,41 +63,41 @@ test("A2 سیاست: توکن صریح → حالت token، تولیدی نیس�
   }
 });
 
-test("A3 سیاست: دسکتاپ بدون توکن صریح → token تولیدی برای همین اجرا", () => {
+test("A3 policy: desktop without an explicit token → a token generated for this run", () => {
   const r = resolveAuthPlan({ auth: undefined, token: undefined, desktop: true });
   expect(r.ok).toBe(true);
   if (r.ok) {
     expect(r.plan.mode).toBe("token");
     expect(r.plan.tokenGenerated).toBe(true);
-    expect(r.plan.token).toBeUndefined(); // خود index.ts مقدار تصادفی می‌سازد
+    expect(r.plan.token).toBeUndefined(); // index.ts itself mints the random value
   }
 });
 
-test("A4 سیاست: HEM_AGENT_AUTH=open + بدون توکن + غیر دسکتاپ → مجاز (استثنای مستند)", () => {
+test("A4 policy: HEM_AGENT_AUTH=open + no token + non-desktop → allowed (the documented exception)", () => {
   const r = resolveAuthPlan({ auth: "open", token: undefined, desktop: false });
   expect(r.ok).toBe(true);
   if (r.ok) expect(r.plan.mode).toBe("open");
 });
 
-test("A5 سیاست: open + توکن → رد (ترکیب مبهم)", () => {
+test("A5 policy: open + token → rejected (an ambiguous combination)", () => {
   const r = resolveAuthPlan({ auth: "open", token: TOKEN, desktop: false });
   expect(r.ok).toBe(false);
   if (!r.ok) expect(r.code).toBe("AUTH_OPEN_WITH_TOKEN");
 });
 
-test("A6 سیاست: open + دسکتاپ → رد (دسکتاپ همیشه توکن‌دار است)", () => {
+test("A6 policy: open + desktop → rejected (desktop is always token-gated)", () => {
   const r = resolveAuthPlan({ auth: "open", token: undefined, desktop: true });
   expect(r.ok).toBe(false);
   if (!r.ok) expect(r.code).toBe("AUTH_DESKTOP_REQUIRES_TOKEN");
 });
 
-test("A7 سیاست: HEM_AGENT_AUTH=token بدون توکن و بدون دسکتاپ → رد", () => {
+test("A7 policy: HEM_AGENT_AUTH=token without a token and without desktop → rejected", () => {
   const r = resolveAuthPlan({ auth: "token", token: undefined, desktop: false });
   expect(r.ok).toBe(false);
   if (!r.ok) expect(r.code).toBe("AUTH_TOKEN_MISSING");
 });
 
-test("A8 سیاست: HEM_AGENT_AUTH=token + دسکتاپ → مجاز (توکن تولیدی)", () => {
+test("A8 policy: HEM_AGENT_AUTH=token + desktop → allowed (a generated token)", () => {
   const r = resolveAuthPlan({ auth: "token", token: undefined, desktop: true });
   expect(r.ok).toBe(true);
   if (r.ok) {
@@ -106,7 +106,7 @@ test("A8 سیاست: HEM_AGENT_AUTH=token + دسکتاپ → مجاز (توکن 
   }
 });
 
-test("A9 سیاست: مقدار نامعتبر → رد با فهرست مقدارهای مجاز", () => {
+test("A9 policy: an invalid value → rejected with the list of allowed values", () => {
   for (const bad of ["yes", "OPEN!", "public", "0"]) {
     const r = resolveAuthPlan({ auth: bad, token: undefined, desktop: false });
     expect(r.ok).toBe(false);
@@ -118,14 +118,14 @@ test("A9 سیاست: مقدار نامعتبر → رد با فهرست مقدا
   }
 });
 
-test("A10 سیاست: مقدار case-insensitive است (OPEN/Token)", () => {
+test("A10 policy: the value is case-insensitive (OPEN/Token)", () => {
   expect(resolveAuthPlan({ auth: "OPEN", token: undefined, desktop: false }).ok).toBe(true);
   expect(resolveAuthPlan({ auth: " Token ", token: TOKEN, desktop: false }).ok).toBe(true);
 });
 
-test("A11 loopback: فقط 127.x/localhost/::1 — بقیه (0.0.0.0، 192.168.x، نام دامنه) نیستند", () => {
+test("A11 loopback: only 127.x/localhost/::1 — the rest (0.0.0.0, 192.168.x, a domain name) are not", () => {
   expect(isLoopbackHost("127.0.0.1")).toBe(true);
-  expect(isLoopbackHost("127.0.0.2")).toBe(true); // کل بلوک 127/8
+  expect(isLoopbackHost("127.0.0.2")).toBe(true); // the whole 127/8 block
   expect(isLoopbackHost("localhost")).toBe(true);
   expect(isLoopbackHost("LOCALHOST")).toBe(true);
   expect(isLoopbackHost("::1")).toBe(true);
@@ -137,19 +137,19 @@ test("A11 loopback: فقط 127.x/localhost/::1 — بقیه (0.0.0.0، 192.168.x
 });
 
 // ===========================================================================
-// B) رفتار HTTP/WS — سه حالت، هم‌ارز و سازگار
+// B) HTTP/WS behavior — three modes, equivalent and consistent
 // ===========================================================================
 
-// --- حالت توکن فعال ---------------------------------------------------------
+// --- active-token mode ---------------------------------------------------------
 let tkStack: TestStack;
 let tkSrv: ListeningServer;
 
-test("B1 حالت توکن فعال: راه‌اندازی", async () => {
+test("B1 active-token mode: startup", async () => {
   tkStack = buildTestStack({ token: TOKEN });
   tkSrv = await listenApp(tkStack.app);
 });
 
-test("B1-۱ سناریو۱: API حساس بدون توکن → 401 (هیچ پاسخ مدیریتی نمی‌آید)", async () => {
+test("B1-1 scenario 1: a sensitive API without a token → 401 (no management response arrives)", async () => {
   for (const p of ["/api/profiles", "/api/sessions", "/api/jobs"]) {
     const r = await fetch(`${tkSrv.baseUrl}${p}`);
     expect(r.status).toBe(401);
@@ -158,7 +158,7 @@ test("B1-۱ سناریو۱: API حساس بدون توکن → 401 (هیچ پا�
   }
 });
 
-test("B1-۲ سناریو۲: توکن معتبر → 200؛ توکن نادرست → 401 (هدر و کوکی یکسان)", async () => {
+test("B1-2 scenario 2: a valid token → 200; a wrong token → 401 (header and cookie identical)", async () => {
   const okH = await fetch(`${tkSrv.baseUrl}/api/profiles`, { headers: { "X-HEM-Token": TOKEN } });
   expect(okH.status).toBe(200);
   const okC = await fetch(`${tkSrv.baseUrl}/api/profiles`, { headers: { Cookie: `hem_token=${TOKEN}` } });
@@ -169,29 +169,29 @@ test("B1-۲ سناریو۲: توکن معتبر → 200؛ توکن نادرست 
   expect(badC.status).toBe(401);
 });
 
-test("B1-۳ سناریو۶: health عمومیِ حداقلی — فقط GET /api/health؛ نه POST، نه مسیر مشابه", async () => {
+test("B1-3 scenario 6: the minimal public health — only GET /api/health; no POST, no lookalike path", async () => {
   const pub = await fetch(`${tkSrv.baseUrl}/api/health`);
   expect(pub.status).toBe(200);
   const body = (await pub.json()) as Record<string, unknown>;
   expect(Object.keys(body).sort()).toEqual(["ok", "service", "version"].sort());
   const post = await fetch(`${tkSrv.baseUrl}/api/health`, { method: "POST" });
-  expect(post.status).toBe(401); // متد دیگر ≠ استثنای عمومی
+  expect(post.status).toBe(401); // a different method ≠ the public exception
   const lookalike = await fetch(`${tkSrv.baseUrl}/api/healthX`);
-  expect(lookalike.status).toBe(401); // مسیر «کاملاً مشابه» هم عمومی نیست
+  expect(lookalike.status).toBe(401); // an "exactly lookalike" path is not public either
   const deep = await fetch(`${tkSrv.baseUrl}/api/health/extra`);
   expect(deep.status).toBe(401);
 });
 
-// --- حالت قفل (توکن تنظیم‌نشده) ---------------------------------------------
+// --- locked mode (no token set) -----------------------------------------------
 let lkStack: TestStack;
 let lkSrv: ListeningServer;
 
-test("B2 حالت قفل (توکن تنظیم‌نشده): راه‌اندازی", async () => {
-  lkStack = buildTestStack({}); // بدون توکن و بدون authMode → قفل
+test("B2 locked mode (no token set): startup", async () => {
+  lkStack = buildTestStack({}); // no token and no authMode → locked
   lkSrv = await listenApp(lkStack.app);
 });
 
-test("B2-۱ سناریو۳: بدون توکن → APIها 503 AUTH_NOT_CONFIGURED — هرگز بدون احراز هویت باز نیست", async () => {
+test("B2-1 scenario 3: no token → the APIs give 503 AUTH_NOT_CONFIGURED — never open without auth", async () => {
   for (const p of ["/api/profiles", "/api/sessions", "/api/jobs", "/api/backup"]) {
     const r = await fetch(`${lkSrv.baseUrl}${p}`);
     expect(r.status).toBe(503);
@@ -202,30 +202,30 @@ test("B2-۱ سناریو۳: بدون توکن → APIها 503 AUTH_NOT_CONFIGURE
   }
 });
 
-test("B2-۲ سناریو۶: در حالت قفل هم health عمومیِ حداقلی کار می‌کند (پاسخ غیرحساس)", async () => {
+test("B2-2 scenario 6: in locked mode the minimal public health also works (a non-sensitive response)", async () => {
   const r = await fetch(`${lkSrv.baseUrl}/api/health`);
   expect(r.status).toBe(200);
   const body = (await r.json()) as Record<string, unknown>;
   expect(Object.keys(body).sort()).toEqual(["ok", "service", "version"].sort());
 });
 
-// --- حالت open (استثنای مستندِ توسعهٔ محلی) ----------------------------------
+// --- open mode (the documented local-dev exception) ----------------------------
 let opStack: TestStack;
 let opSrv: ListeningServer;
 
-test("B3 حالت open: راه‌اندازی (استثنای مستند — در index.ts فقط loopback)", async () => {
+test("B3 open mode: startup (the documented exception — loopback-only in index.ts)", async () => {
   opStack = buildTestStack({ authMode: "open" });
   opSrv = await listenApp(opStack.app);
 });
 
-test("B3-۱ سناریو۵: open → API بدون احراز هویت در دسترس است (مستند و محدود به توسعهٔ محلی)", async () => {
+test("B3-1 scenario 5: open → the API is reachable without auth (documented, local-dev only)", async () => {
   const r = await fetch(`${opSrv.baseUrl}/api/profiles`);
   expect(r.status).toBe(200);
   const body = (await r.json()) as { ok: boolean };
   expect(body.ok).toBe(true);
 });
 
-test("B3-۲ سناریو۶: health در حالت open پاسخ کامل می‌دهد (هم‌ارز HTTP: بدون احراز هویت)", async () => {
+test("B3-2 scenario 6: health gives the full response in open mode (HTTP-equivalent: no auth)", async () => {
   const r = await fetch(`${opSrv.baseUrl}/api/health`);
   expect(r.status).toBe(200);
   const body = (await r.json()) as Record<string, unknown>;
@@ -233,7 +233,7 @@ test("B3-۲ سناریو۶: health در حالت open پاسخ کامل می‌�
   expect(body.sessions).toBeDefined();
 });
 
-// --- WebSocket — هم‌ارزی با HTTP در هر سه حالت -------------------------------
+// --- WebSocket — equivalence with HTTP in all three modes ---------------------
 const WS_GRACE_MS = 400;
 
 function tryConnect(url: string, extraHeaders: Record<string, string>, timeoutMs = 4000): Promise<boolean> {
@@ -264,7 +264,7 @@ function tryConnect(url: string, extraHeaders: Record<string, string>, timeoutMs
   });
 }
 
-/** مهلت محافظ برای بستن سرور — server.close() روی سوکت‌های keep-alive می‌مانَد (رفتار شناخته‌شدهٔ bun/undici) */
+/** Safety cap for closing a server — server.close() hangs on keep-alive sockets (known bun/undici behavior) */
 const cap = (ms: number): Promise<unknown> => new Promise((r) => setTimeout(r, ms));
 
 async function closeIoSrv(srv: { closeIo: () => Promise<void>; close: () => Promise<void> }): Promise<void> {
@@ -272,7 +272,7 @@ async function closeIoSrv(srv: { closeIo: () => Promise<void>; close: () => Prom
   await Promise.race([srv.close(), cap(2500)]);
 }
 
-test("B4-۱ سناریو۵ WS در حالت توکن: بدون توکن/نادرست → قطع؛ معتبر → متصل (هدر و کوکی مثل HTTP)", async () => {
+test("B4-1 scenario 5, WS in token mode: no/wrong token → cut; valid → connected (header and cookie like HTTP)", async () => {
   const srv = await listenStackIo(tkStack, { token: TOKEN });
   try {
     const ws = srv.baseUrl.replace(/^http/, "ws");
@@ -286,7 +286,7 @@ test("B4-۱ سناریو۵ WS در حالت توکن: بدون توکن/نادر
   }
 });
 
-test("B4-۲ سناریو۵ WS در حالت قفل (توکن تنظیم‌نشده): هر اتصالی بلافاصله قطع می‌شود", async () => {
+test("B4-2 scenario 5, WS in locked mode (no token set): every connection is cut immediately", async () => {
   const srv = await listenStackIo(lkStack, {});
   try {
     const ws = srv.baseUrl.replace(/^http/, "ws");
@@ -297,7 +297,7 @@ test("B4-۲ سناریو۵ WS در حالت قفل (توکن تنظیم‌نشد
   }
 });
 
-test("B4-۳ سناریو۵ WS در حالت open: اتصال‌ها باز هستند (هم‌ارزِ HTTP)", async () => {
+test("B4-3 scenario 5, WS in open mode: connections are open (HTTP-equivalent)", async () => {
   const srv = await listenStackIo(opStack, { authMode: "open" });
   try {
     const ws = srv.baseUrl.replace(/^http/, "ws");
@@ -308,12 +308,12 @@ test("B4-۳ سناریو۵ WS در حالت open: اتصال‌ها باز هس�
 });
 
 // ===========================================================================
-// C) فرایند واقعی — spawn خودِ bun index.ts (رفتار شروع/بایند/دسکتاپ/نشت)
+// C) real process — spawning bun index.ts itself (startup/bind/desktop/leak behavior)
 // ===========================================================================
 
 const AGENT_DIR = import.meta.dir + "/..";
 
-/** محیط تمیز برای فرایند: متغیرهای HEM_* والد حذف می‌شوند تا تست‌ها مستقل باشند */
+/** Clean environment for the child process: parent HEM_* variables are dropped so tests stay independent */
 function cleanEnv(overrides: Record<string, string>): Record<string, string> {
   const env: Record<string, string> = {};
   for (const [k, v] of Object.entries(process.env)) {
@@ -328,7 +328,7 @@ interface ProcResult {
   output: string;
 }
 
-/** اجرای index.ts و انتظار برای خروج (سناریوهای «شروع نمی‌شود») */
+/** Run index.ts and wait for the exit (the "refuses to start" scenarios) */
 function runExpectExit(env: Record<string, string>, expectCode: string, timeoutMs = 20_000): Promise<ProcResult> {
   return new Promise<ProcResult>((resolve, reject) => {
     const child = spawn(process.execPath, [path.join(AGENT_DIR, "index.ts")], {
@@ -340,16 +340,16 @@ function runExpectExit(env: Record<string, string>, expectCode: string, timeoutM
     child.stderr?.on("data", (d: Buffer) => (output += d.toString()));
     const timer = setTimeout(() => {
       child.kill("SIGKILL");
-      reject(new Error(`فرایند در ${timeoutMs}ms خارج نشد. خروجی:\n${output}`));
+      reject(new Error(`process did not exit within ${timeoutMs}ms. Output:\n${output}`));
     }, timeoutMs);
     child.on("exit", (code) => {
       clearTimeout(timer);
       if (code === null) {
-        reject(new Error("فرایند با سیگنال کشته شد"));
+        reject(new Error("process was killed by a signal"));
         return;
       }
       if (!output.includes(expectCode)) {
-        reject(new Error(`کد خطای مورد انتظار "${expectCode}" در خروجی نیست:\n${output}`));
+        reject(new Error(`expected error code "${expectCode}" not found in output:\n${output}`));
         return;
       }
       resolve({ exitCode: code, output });
@@ -371,16 +371,16 @@ function killServerChild(c: ChildProcess): void {
   }
 }
 
-test("C1 سناریو۳/۴: بدون توکن و بدون صراحت → فرایندِ واقعی با exit غیرصفر متوقف می‌شود", async () => {
+test("C1 scenarios 3/4: no token and no explicit setting → the real process stops with a non-zero exit", async () => {
   const r = await runExpectExit(
     cleanEnv({ HEM_AGENT_PORT: "31051", HEM_AGENT_HOME: fs.mkdtempSync(path.join(os.tmpdir(), "hem-c1-")) }),
     "AUTH_NOT_CONFIGURED",
   );
   expect(r.exitCode).not.toBe(0);
-  expect(r.output).toContain("شروع نمی‌شود");
+  expect(r.output).toContain("refuses to start");
 });
 
-test("C2 سناریو۴: bind غیر loopback بدون احراز هویت (open + 0.0.0.0) → شروع نمی‌شود", async () => {
+test("C2 scenario 4: non-loopback bind without auth (open + 0.0.0.0) → refuses to start", async () => {
   const r = await runExpectExit(
     cleanEnv({
       HEM_AGENT_PORT: "31052",
@@ -391,10 +391,10 @@ test("C2 سناریو۴: bind غیر loopback بدون احراز هویت (open
     "loopback",
   );
   expect(r.exitCode).not.toBe(0);
-  expect(r.output).toContain("راه‌اندازی متوقف شد");
+  expect(r.output).toContain("startup aborted");
 });
 
-test("C3 سناریو۴: bind غیر loopback بدون هیچ توکن/صراحت (فقط HEM_AGENT_HOST) → شروع نمی‌شود", async () => {
+test("C3 scenario 4: a non-loopback bind with no token/explicit setting (only HEM_AGENT_HOST) → refuses to start", async () => {
   const r = await runExpectExit(
     cleanEnv({
       HEM_AGENT_PORT: "31053",
@@ -406,7 +406,7 @@ test("C3 سناریو۴: bind غیر loopback بدون هیچ توکن/صراح�
   expect(r.exitCode).not.toBe(0);
 });
 
-test("C4 پیکربندی متناقض: HEM_AGENT_AUTH=token بدون توکن → شروع نمی‌شود", async () => {
+test("C4 contradictory config: HEM_AGENT_AUTH=token without a token → refuses to start", async () => {
   const r = await runExpectExit(
     cleanEnv({
       HEM_AGENT_PORT: "31054",
@@ -418,7 +418,7 @@ test("C4 پیکربندی متناقض: HEM_AGENT_AUTH=token بدون توکن �
   expect(r.exitCode).not.toBe(0);
 });
 
-test("C5 پیکربندی متناقض: open + توکن → شروع نمی‌شود", async () => {
+test("C5 contradictory config: open + token → refuses to start", async () => {
   const r = await runExpectExit(
     cleanEnv({
       HEM_AGENT_PORT: "31055",
@@ -431,7 +431,7 @@ test("C5 پیکربندی متناقض: open + توکن → شروع نمی‌ش
   expect(r.exitCode).not.toBe(0);
 });
 
-test("C6 سناریو۴: bind شبکه‌ای «با توکن» → شروع می‌شود + هشدار صریح (انتخاب آگاهانه)", async () => {
+test("C6 scenario 4: a network bind 'with a token' → starts + an explicit warning (an informed choice)", async () => {
   const port = await freePort();
   const home = fs.mkdtempSync(path.join(os.tmpdir(), "hem-c6-"));
   const child = spawn(process.execPath, [path.join(AGENT_DIR, "index.ts")], {
@@ -450,19 +450,19 @@ test("C6 سناریو۴: bind شبکه‌ای «با توکن» → شروع م�
   try {
     const deadline = Date.now() + 30_000;
     for (;;) {
-      if (child.exitCode !== null) throw new Error(`فرایند مرد (exit=${child.exitCode}). خروجی:\n${output}`);
+      if (child.exitCode !== null) throw new Error(`process died (exit=${child.exitCode}). Output:\n${output}`);
       try {
         const r = await fetch(`http://127.0.0.1:${port}/api/health`, { signal: AbortSignal.timeout(2000) });
         if (r.status === 200) break;
       } catch {
-        /* هنوز بالا نیامده */
+        /* not up yet */
       }
-      if (Date.now() > deadline) throw new Error(`سرو در ۳۰ ثانیه بالا نیامد. خروجی:\n${output}`);
+      if (Date.now() > deadline) throw new Error(`server did not come up within 30s. Output:\n${output}`);
       await new Promise((res) => setTimeout(res, 300));
     }
-    expect(output).toContain("آدرس شبکه‌ای"); // هشدار صریح
+    expect(output).toContain("network address"); // explicit warning
     expect(output).toContain(`listening on http://0.0.0.0:${port}`);
-    // در شبکه هم: بدون توکن 401، با توکن 200
+    // on the network too: no token → 401, with token → 200
     const no = await fetch(`http://127.0.0.1:${port}/api/profiles`);
     expect(no.status).toBe(401);
     const yes = await fetch(`http://127.0.0.1:${port}/api/profiles`, { headers: { "X-HEM-Token": TOKEN } });
@@ -472,7 +472,7 @@ test("C6 سناریو۴: bind شبکه‌ای «با توکن» → شروع م�
   }
 }, 60_000);
 
-test("C7 دسکتاپ واقعی: توکن تولیدی + قفل کامل + یک‌بارمصرف + «عدم نشت» در audit.log و پاسخ‌ها", async () => {
+test("C7 a real desktop run: generated token + fully locked + one-time + \"no leak\" into audit.log and responses", async () => {
   const port = await freePort();
   const home = fs.mkdtempSync(path.join(os.tmpdir(), "hem-c7-"));
   const child = spawn(process.execPath, [path.join(AGENT_DIR, "index.ts"), "--desktop"], {
@@ -484,52 +484,52 @@ test("C7 دسکتاپ واقعی: توکن تولیدی + قفل کامل + یک
   child.stdout?.on("data", (d: Buffer) => (output += d.toString()));
   child.stderr?.on("data", (d: Buffer) => (output += d.toString()));
   try {
-    // بالا آمدن: health عمومی (بدون توکن) 200 JSON حداقلی
+    // coming up: the public health (no token) 200 minimal JSON
     const deadline = Date.now() + 30_000;
     for (;;) {
-      if (child.exitCode !== null) throw new Error(`فرایند مرد (exit=${child.exitCode}). خروجی:\n${output}`);
+      if (child.exitCode !== null) throw new Error(`process died (exit=${child.exitCode}). Output:\n${output}`);
       try {
         const r = await fetch(`http://127.0.0.1:${port}/api/health`, { signal: AbortSignal.timeout(2000) });
         if (r.status === 200) break;
       } catch {
-        /* هنوز بالا نیامده */
+        /* not up yet */
       }
-      if (Date.now() > deadline) throw new Error(`سرو در ۳۰ ثانیه بالا نیامد. خروجی:\n${output}`);
+      if (Date.now() > deadline) throw new Error(`server did not come up within 30s. Output:\n${output}`);
       await new Promise((res) => setTimeout(res, 300));
     }
 
-    // لاگ: حالت token با توکن تولیدی
+    // the log: token mode with a generated token
     expect(output).toContain("auth: token");
     expect(output).toContain("generated for this run");
 
-    // توکن فقط از خط «desktop UI:» قابل استخراج است (کانال تحویل بوت‌استرپ)
+    // the token can only be extracted from the "desktop UI:" line (the bootstrap delivery channel)
     const m = /desktop UI: http:\/\/127\.0\.0\.1:\d+\/\?token=([0-9a-f]{24,})/.exec(output);
-    if (!m) throw new Error(`توکن دسکتاپ در لاگ پیدا نشد. خروجی:\n${output}`);
+    if (!m) throw new Error(`desktop token not found in the log. Output:\n${output}`);
     const dtok = m[1]!;
-    expect(dtok.length).toBeGreaterThanOrEqual(48); // randomBytes(24) → hex ۴۸ نویسه
+    expect(dtok.length).toBeGreaterThanOrEqual(48); // randomBytes(24) → 48 hex chars
 
-    // بدون توکن → 401؛ با توکن تولیدی → 200 (API واقعی، نه فقط health)
+    // no token → 401; with the generated token → 200 (a real API, not just health)
     const no = await fetch(`http://127.0.0.1:${port}/api/profiles`);
     expect(no.status).toBe(401);
     const yes = await fetch(`http://127.0.0.1:${port}/api/profiles`, { headers: { "X-HEM-Token": dtok } });
     expect(yes.status).toBe(200);
 
-    // تبادل یک‌بارمصرف + replay مرده (رفتار HTTP همان v0.3.1 §4)
+    // the one-time exchange + dead replay (the same HTTP behavior as v0.3.1 §4)
     const b1 = await fetch(`http://127.0.0.1:${port}/?token=${dtok}`, { redirect: "manual" });
     expect(b1.status).toBe(303);
     expect(b1.headers.get("set-cookie") ?? "").toContain("HttpOnly");
     const b2 = await fetch(`http://127.0.0.1:${port}/?token=${dtok}`, { redirect: "manual" });
     expect(b2.headers.get("set-cookie")).toBeNull();
 
-    // سناریو۷ — عدم نشت:
-    // (الف) توکن «فقط» در خط desktop UI آمده است، نه در هیچ خط دیگری از لاگ:
+    // scenario 7 — no leak:
+    // (a) the token appears "only" on the desktop UI line, on no other log line:
     const linesWithToken = output.split("\n").filter((l) => l.includes(dtok));
     expect(linesWithToken.length).toBe(1);
     expect(linesWithToken[0]!.includes("desktop UI:")).toBe(true);
-    // (ب) پاسخ‌های API هیچ‌وقت توکن را برنمی‌گردانند:
+    // (b) API responses never return the token:
     const noBody = (await no.json()) as Record<string, unknown>;
     expect(JSON.stringify(noBody)).not.toContain(dtok);
-    // (ج) audit.log بدون توکن است (اگر تاکنون رکوردی نوشته شده):
+    // (c) audit.log contains no token (if any record has been written so far):
     const auditFile = path.join(home, "audit.log");
     if (fs.existsSync(auditFile)) {
       const auditText = fs.readFileSync(auditFile, "utf8");

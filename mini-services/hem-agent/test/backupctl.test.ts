@@ -1,9 +1,9 @@
-// تست پشتیبان/بازیابی/ارتقا (§4 — Task 5-d):
-//  • روی سرور تست hsctl نیست → هر ۵ endpoint باید صادقانهٔ NOT_AVAILABLE بدهد
-//    (این قابلیت‌ها «پس از نصب اولیه» معنا دارند — رفتار درست همین است)
-//  • اعتبارسنجی مسیر فایل پشتیبان (بدون traversal/متکار)
-//  • confirm مفقود → NEED_CONFIRM
-//  • update/check واقعی (نسخهٔ سرور از shim + پین پروژه)
+// Backup/restore/upgrade tests (§4 — Task 5-d):
+//  • hsctl is not on the test server → all 5 endpoints must honestly return NOT_AVAILABLE
+//    (these features only make sense "after the initial install" — that IS the correct behavior)
+//  • backup file path validation (no traversal/metacharacters)
+//  • missing confirm → NEED_CONFIRM
+//  • a real update/check (server version from the shim + the project pin)
 import { afterAll, beforeAll, expect, test } from "bun:test";
 import { startTestServer, TEST_HOST, TEST_PASSWORD, type TestServerHandle } from "./server";
 import {
@@ -26,7 +26,7 @@ const hsPrefix = "/tmp/hs-bin/headscale --config /home/z/hs-test/config.yaml";
 beforeAll(async () => {
   ensureHeadscaleHealthy();
   ts = await startTestServer({ port: 0 });
-  stack = buildTestStack({ authMode: "open" }); // v0.3.2 §2: تست منطق کسب‌وکار در استثنای مستندِ توسعه (بدون احراز هویت)
+  stack = buildTestStack({ authMode: "open" }); // v0.3.2 §2: business-logic tests under the documented dev exception (no auth)
   srv = await listenApp(stack.app);
   sid = await connectAndConfirm(srv.baseUrl, {
     host: TEST_HOST,
@@ -61,8 +61,8 @@ const post = async (path: string, body: unknown): Promise<{ status: number; body
   return { status: res.status, body: await res.json() };
 };
 
-// --- واحد: اعتبارسنجی مسیر و پارسرها ---
-test("normalizeBackupFile: فقط basename یا مسیر امن زیر /var/backups/hem", () => {
+// --- unit: path validation and parsers ---
+test("normalizeBackupFile: only a basename or a safe path under /var/backups/hem", () => {
   expect(normalizeBackupFile("hem-backup-2025.tar.gz")).toBe("/var/backups/hem/hem-backup-2025.tar.gz");
   expect(normalizeBackupFile("/var/backups/hem/a/b.tar.gz")).toBe("/var/backups/hem/a/b.tar.gz");
   expect(() => normalizeBackupFile("../../etc/passwd")).toThrow();
@@ -73,7 +73,7 @@ test("normalizeBackupFile: فقط basename یا مسیر امن زیر /var/back
   expect(() => normalizeBackupFile("")).toThrow();
 });
 
-test("parseBackupList / parseBackupVerify: تجزیهٔ خروجی واقعی hsctl", () => {
+test("parseBackupList / parseBackupVerify: parse real hsctl output", () => {
   const listOut = [
     "پشتیبان‌ها در /var/backups/hem:",
     "نام فایل          حجم",
@@ -93,13 +93,13 @@ test("parseBackupList / parseBackupVerify: تجزیهٔ خروجی واقعی hs
   expect(parsed.issues[0]).toContain("config.yaml");
 });
 
-test("pinnedHsVersion: پین پروژه (منبع واحد constants.py)", () => {
+test("pinnedHsVersion: the project pin (single source constants.py)", () => {
   expect(pinnedHsVersion()).toMatch(/^\d+\.\d+\.\d+$/);
   expect(pinnedHsVersion()).toBe("0.29.5");
 });
 
-// --- یکپارچه: hsctl نیست → NOT_AVAILABLE صادقانه ---
-test("backup/list: hsctl نیست → 503 NOT_AVAILABLE صادقانه", async () => {
+// --- integration: no hsctl → honest NOT_AVAILABLE ---
+test("backup/list: no hsctl → honest 503 NOT_AVAILABLE", async () => {
   const { status, body } = await get("/backup/list");
   expect(status).toBe(503);
   expect(body.ok).toBe(false);
@@ -107,68 +107,68 @@ test("backup/list: hsctl نیست → 503 NOT_AVAILABLE صادقانه", async (
   expect(body.message).toContain("hsctl");
 });
 
-test("backup/create: hsctl نیست → 503 NOT_AVAILABLE (job شروع نمی‌شود)", async () => {
+test("backup/create: no hsctl → 503 NOT_AVAILABLE (no job is started)", async () => {
   const { status, body } = await post("/backup/create", {});
   expect(status).toBe(503);
   expect(body.error).toBe("NOT_AVAILABLE");
 });
 
-test("backup/verify: فایل با قالب معتبر اما hsctl نیست → 503 NOT_AVAILABLE", async () => {
+test("backup/verify: valid-format file but no hsctl → 503 NOT_AVAILABLE", async () => {
   const { status, body } = await post("/backup/verify", { file: "hem-backup-20251024.tar.gz" });
   expect(status).toBe(503);
   expect(body.error).toBe("NOT_AVAILABLE");
 });
 
-test("backup/verify: مسیر traversal → 400 VALIDATION_FAILED (قبل از هر چیز)", async () => {
+test("backup/verify: traversal path → 400 VALIDATION_FAILED (before anything else)", async () => {
   const { status, body } = await post("/backup/verify", { file: "../../etc/passwd" });
   expect(status).toBe(400);
   expect(body.error).toBe("VALIDATION_FAILED");
 });
 
-test("restore: بدون confirm → NEED_CONFIRM با نام فایل", async () => {
+test("restore: no confirm → NEED_CONFIRM with the file name", async () => {
   const { status, body } = await post("/restore", { file: "hem-backup-20251024.tar.gz" });
   expect(status).toBe(400);
   expect(body.error).toBe("NEED_CONFIRM");
   expect(body.message).toContain("hem-backup-20251024.tar.gz");
 });
 
-test("restore: مسیر مطلق خارج از /var/backups/hem → 400", async () => {
+test("restore: absolute path outside /var/backups/hem → 400", async () => {
   const { status, body } = await post("/restore", { file: "/tmp/evil.tar.gz", confirm: true });
   expect(status).toBe(400);
   expect(body.error).toBe("VALIDATION_FAILED");
 });
 
-test("restore: confirm مفقود حتی با مسیر traversal → خطای مسیر (اعتبارسنجی اول)", async () => {
+test("restore: missing confirm even with a traversal path → path error (validation first)", async () => {
   const { status, body } = await post("/restore", { file: "a/../b.tar.gz" });
   expect(status).toBe(400);
   expect(body.error).toBe("VALIDATION_FAILED");
 });
 
-test("restore: قالب معتبر + confirm اما hsctl نیست → 503 NOT_AVAILABLE", async () => {
+test("restore: valid format + confirm but no hsctl → 503 NOT_AVAILABLE", async () => {
   const { status, body } = await post("/restore", { file: "hem-backup-20251024.tar.gz", confirm: true });
   expect(status).toBe(503);
   expect(body.error).toBe("NOT_AVAILABLE");
 });
 
-test("update/execute: بدون confirm → NEED_CONFIRM", async () => {
+test("update/execute: no confirm → NEED_CONFIRM", async () => {
   const { status, body } = await post("/update/execute", { version: "0.30.0" });
   expect(status).toBe(400);
   expect(body.error).toBe("NEED_CONFIRM");
 });
 
-test("update/execute: نسخهٔ نامعتبر → 400 VALIDATION_FAILED", async () => {
+test("update/execute: invalid version → 400 VALIDATION_FAILED", async () => {
   const { status, body } = await post("/update/execute", { version: "latest!", confirm: true });
   expect(status).toBe(400);
   expect(body.error).toBe("VALIDATION_FAILED");
 });
 
-test("update/execute: confirm + قالب معتبر اما hsctl نیست → 503 NOT_AVAILABLE", async () => {
+test("update/execute: confirm + valid format but no hsctl → 503 NOT_AVAILABLE", async () => {
   const { status, body } = await post("/update/execute", { version: "0.30.0", confirm: true });
   expect(status).toBe(503);
   expect(body.error).toBe("NOT_AVAILABLE");
 });
 
-test("update/check: نسخهٔ واقعی سرور (shim) در برابر پین پروژه", async () => {
+test("update/check: the server's real version (shim) vs the project pin", async () => {
   const { status, body } = await get("/update/check");
   expect(status).toBe(200);
   expect(body.ok).toBe(true);

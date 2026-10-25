@@ -3,15 +3,15 @@ import { homedir } from "node:os";
 import * as path from "node:path";
 import { inCompiledBinary } from "./exepath";
 
-/** نسخهٔ agent — هماهنگ با package.json (v0.3.2: رفع باگ UI ویندوزی) */
-export const AGENT_VERSION = "0.3.2-beta.2"; // پیش‌انتشار توسعه (develop) — شاخهٔ پایدار: main
+/** Agent version — kept in sync with package.json (v0.3.2: Windows UI bug fix) */
+export const AGENT_VERSION = "0.3.2-beta.3"; // development pre-release (develop) — stable branch: main
 
-/** آدرس bind (پیش‌فرض loopback — دسترسی شبکه‌ای باید آگاهانه و با توکن باشد) */
+/** Bind address (loopback by default — network access must be a conscious, token-protected choice) */
 export function agentHost(): string {
   return process.env.HEM_AGENT_HOST || "127.0.0.1";
 }
 
-/** آیا آدرس bind فقط loopback است؟ (127.x / localhost / ::1 — حالت open فقط اینجا مجاز است) */
+/** Is the bind address loopback-only? (127.x / localhost / ::1 — open mode is allowed only there) */
 export function isLoopbackHost(host: string): boolean {
   const h = host.trim().toLowerCase();
   if (h === "localhost" || h === "::1" || h === "[::1]") return true;
@@ -19,81 +19,87 @@ export function isLoopbackHost(host: string): boolean {
   return false;
 }
 
-/** پورت پیش‌فرض ۳۰۰۵ — از طریق دروازه با ?XTransformPort=3005 قابل دسترسی است */
+/** Default port 3005 — reachable through the gateway with ?XTransformPort=3005 */
 export function agentPort(): number {
   const p = Number(process.env.HEM_AGENT_PORT || 3005);
   if (!Number.isInteger(p) || p <= 0 || p > 65535) return 3005;
   return p;
 }
 
-/** پوشهٔ خانهٔ agent — پروفایل‌ها، known_hosts، لاگ حسابرسی و اسرار (حالت توسعه) */
+/** Agent home folder — profiles, known_hosts, audit log and secrets (dev mode) */
 export function agentHome(): string {
   return process.env.HEM_AGENT_HOME || path.join(homedir(), ".hem-agent");
 }
 
-/** توکن اختیاری X-HEM-Token (حالت دسکتاپ) */
+/** Optional X-HEM-Token (desktop mode) */
 export function agentToken(): string | undefined {
   const t = process.env.HEM_AGENT_TOKEN;
   return t && t.length > 0 ? t : undefined;
 }
 
 // ---------------------------------------------------------------------------
-// سیاست احراز هویت (v0.3.2 §2 — اصلاح امنیتی «عبور بدون توکن»)
+// Auth policy (v0.3.2 §2 — the "pass-through without token" security fix)
 //
-// باگ: قبلاً اگر HEM_AGENT_TOKEN تنظیم نشده بود، middleware مربوط به /api
-// درخواست را «بدون احراز هویت» عبور می‌داد و WebSocket هم بی‌دفاع بود؛ یعنی
-// نبودن توکن یعنی سرویسِ باز — دقیقاً برعکسِ رفتار امن (fail-closed).
+// Bug: previously, if HEM_AGENT_TOKEN was not set, the /api middleware let
+// requests through "unauthenticated" and WebSocket was equally exposed; in
+// other words: no token meant an open service — the exact opposite of the
+// secure behavior (fail-closed).
 //
-// مدل جدید — سه حالتِ صریح:
-//   • token: همهٔ /api (به‌جز health عمومیِ حداقلی) و همهٔ WebSocketها به
-//     هدر X-HEM-Token یا کوکی hem_token نیاز دارند (timing-safe).
-//   • open:  استثنای «مستند و محدودِ» توسعهٔ محلی — فقط با تنظیم صریح
-//     HEM_AGENT_AUTH=open و فقط روی آدرس loopback؛ در غیر این صورت
-//     راه‌اندازی با خطای روشن متوقف می‌شود.
-//   • حالت بدون توکن و بدون صراحت: سرویس «شروع نمی‌شود» (exit غیرصفر با
-//     پیام فارسی قابل‌فهم). لایهٔ API هم دفاعی 503 AUTH_NOT_CONFIGURED
-//     می‌دهد (defense-in-depth برای فراخوانی مستقیم createApp در تست‌ها).
+// New model — three explicit states:
+//   • token: all /api routes (except the minimal public health endpoint) and
+//     all WebSockets require the X-HEM-Token header or the hem_token cookie
+//     (timing-safe comparison).
+//   • open:  the "documented and restricted" local-development exception —
+//     only with an explicit HEM_AGENT_AUTH=open and only on a loopback
+//     address; anything else stops startup with a clear error.
+//   • No token and nothing explicit: the service "refuses to start"
+//     (non-zero exit with a clear message). The API layer also answers with a
+//     defensive 503 AUTH_NOT_CONFIGURED (defense-in-depth for direct
+//     createApp calls in tests).
 //
-// حالت دسکتاپ همیشه توکن‌دار است: توکن صریح، یا تولید تصادفیِ امنِ همان
-// اجرا (randomBytes(24)) — هرگز حالت open.
+// Desktop mode is always token-protected: an explicit token, or a secure
+// random one generated for that single run (randomBytes(24)) — never open.
+// (v0.3.2-beta.3: these messages go to the console/terminal — English-only
+// per user directive; the browser UI strings stay Persian.)
 // ---------------------------------------------------------------------------
 
 export type AgentAuthMode = "token" | "open";
 
 export interface AuthPlan {
   mode: AgentAuthMode;
-  /** توکن فعال در حالت token (صریح یا تولیدشده برای همین اجرا) */
+  /** Active token in token mode (explicit, or generated for this run) */
   token?: string;
-  /** true = توکنِ تولیدشدهٔ همین اجرا (فقط دسکتاپ) */
+  /** true = a token generated for this run (desktop only) */
   tokenGenerated: boolean;
   desktop: boolean;
 }
 
 export interface AuthPlanInput {
-  /** مقدار HEM_AGENT_AUTH (اختیاری — خالی یعنی تنظیم نشده) */
+  /** HEM_AGENT_AUTH value (optional — empty means unset) */
   auth?: string;
-  /** مقدار HEM_AGENT_TOKEN (اختیاری — خالی یعنی تنظیم نشده) */
+  /** HEM_AGENT_TOKEN value (optional — empty means unset) */
   token?: string;
   desktop: boolean;
 }
 
 export type AuthPlanResult = { ok: true; plan: AuthPlan } | { ok: false; code: string; message: string };
 
-/** اعتبارسنجی سیاست — تابع خالص و قابل تست؛ همهٔ ترکیب‌ها صریح و بی‌ابهام */
+/** Policy validation — a pure, testable function; every combination explicit and unambiguous */
 export function resolveAuthPlan(input: AuthPlanInput): AuthPlanResult {
   const auth = (input.auth ?? "").trim().toLowerCase();
-  // توکنِ فقط‌فاصله‌ای = تنظیم‌نشده (هم‌ارز resolveDesktopMode/agentAuthPolicy) —
-  // وگرنه «توکنِ دوفاصله‌ای» به‌عنوان توکن واقعیِ حالت token پذیرفته می‌شد.
+  // A whitespace-only token counts as unset (equivalent to
+  // resolveDesktopMode/agentAuthPolicy) — otherwise a "two-space token" would
+  // be accepted as a real token in token mode.
   const token = input.token && input.token.trim().length > 0 ? input.token : undefined;
 
-  // مقدار نامعتبر HEM_AGENT_AUTH — هر چیزی به‌جز token/open رد می‌شود
+  // Invalid HEM_AGENT_AUTH value — anything other than token/open is rejected
   if (auth && auth !== "token" && auth !== "open") {
     return {
       ok: false,
       code: "AUTH_INVALID_POLICY",
       message:
-        `مقدار HEM_AGENT_AUTH="${input.auth}" معتبر نیست. مقدارهای مجاز: token یا open ` +
-        "(یا اصلاً تنظیم نکنید تا با HEM_AGENT_TOKEN کار کند).",
+        `HEM_AGENT_AUTH="${input.auth}" is not valid. Allowed values: token or open ` +
+        "(or leave it unset to use HEM_AGENT_TOKEN).",
     };
   }
 
@@ -103,8 +109,8 @@ export function resolveAuthPlan(input: AuthPlanInput): AuthPlanResult {
         ok: false,
         code: "AUTH_DESKTOP_REQUIRES_TOKEN",
         message:
-          "حالت دسکتاپ همیشه با توکن کار می‌کند (صریح یا تولیدشده برای همین اجرا) و حالت open با آن سازگار نیست. " +
-          "HEM_AGENT_AUTH را حذف کنید.",
+          "Desktop mode always runs with a token (explicit, or generated for this run) and is not compatible with open mode. " +
+          "Remove HEM_AGENT_AUTH.",
       };
     }
     if (token) {
@@ -112,8 +118,8 @@ export function resolveAuthPlan(input: AuthPlanInput): AuthPlanResult {
         ok: false,
         code: "AUTH_OPEN_WITH_TOKEN",
         message:
-          "HEM_AGENT_AUTH=open با HEM_AGENT_TOKEN هم‌زمان تنظیم شده‌اند — ترکیب مبهم است. " +
-          "برای احراز هویت، HEM_AGENT_AUTH را حذف کنید؛ برای توسعهٔ محلیِ بدون توکن، HEM_AGENT_TOKEN را حذف کنید.",
+          "HEM_AGENT_AUTH=open and HEM_AGENT_TOKEN are both set — this combination is ambiguous. " +
+          "For authentication, remove HEM_AGENT_AUTH; for local no-token development, remove HEM_AGENT_TOKEN.",
       };
     }
     return { ok: true, plan: { mode: "open", token: undefined, tokenGenerated: false, desktop: false } };
@@ -124,53 +130,54 @@ export function resolveAuthPlan(input: AuthPlanInput): AuthPlanResult {
       ok: false,
       code: "AUTH_TOKEN_MISSING",
       message:
-        "HEM_AGENT_AUTH=token تنظیم شده اما HEM_AGENT_TOKEN خالی است. توکن را تنظیم کنید " +
-        "یا HEM_AGENT_AUTH را حذف کنید.",
+        "HEM_AGENT_AUTH=token is set but HEM_AGENT_TOKEN is empty. Set a token " +
+        "or remove HEM_AGENT_AUTH.",
     };
   }
 
-  // auth = "token" یا تنظیم‌نشده → سیاست token؛ توکن صریح یا (دسکتاپ) تولیدی
+  // auth = "token" or unset -> token policy; explicit token or (desktop) generated
   if (token || input.desktop) {
     return { ok: true, plan: { mode: "token", token, tokenGenerated: !token && input.desktop, desktop: input.desktop } };
   }
 
-  // هیچ توکنی نیست و صریحاً open هم نخواسته‌اند → شروع نمی‌کنیم (fail-closed)
+  // No token and open not explicitly requested -> we refuse to start (fail-closed)
   return {
     ok: false,
     code: "AUTH_NOT_CONFIGURED",
     message:
-      "هیچ توکنی تنظیم نشده است؛ سرویس بدون احراز هویت شروع نمی‌شود.\n" +
-      "  • برای اجرای واقعی: HEM_AGENT_TOKEN را با یک رمز تصادفی بلند تنظیم کنید.\n" +
-      "  • فقط برای توسعهٔ محلی (loopback): HEM_AGENT_AUTH=open را صریح تنظیم کنید — " +
-      "این حالت بدون احراز هویت و فقط روی 127.0.0.1 اجرا می‌شود.",
+      "No token is configured; the service refuses to start without authentication.\n" +
+      "  - For real deployments: set HEM_AGENT_TOKEN to a long random secret.\n" +
+      "  - For local development only (loopback): explicitly set HEM_AGENT_AUTH=open — " +
+      "it runs without authentication on 127.0.0.1 only.",
   };
 }
 
-/** مقدار HEM_AGENT_AUTH از محیط (بدون اعتبارسنجی — اعتبارسنجی در resolveAuthPlan) */
+/** HEM_AGENT_AUTH value from the environment (no validation — validation lives in resolveAuthPlan) */
 export function agentAuthPolicy(): string | undefined {
   const v = process.env.HEM_AGENT_AUTH;
   return v && v.trim().length > 0 ? v : undefined;
 }
 
 // ---------------------------------------------------------------------------
-// حالت دسکتاپ (v0.3.2-beta.2 — رفع «بسته‌شدن سریع EXE»):
+// Desktop mode (v0.3.2-beta.2 — the "EXE flash-close" fix):
 //
-// باگ: در v0.3.2-beta.1 اجرای «خالی» hem-manager.exe روی ویندوز (دابل‌کلیک،
-// بدون هیچ متغیر محیطی) نه توکنی داشت، نه HEM_DESKTOP، نه هیچ صراحتی —
-// سیاست fail-closed درست رفتار می‌کرد (AUTH_NOT_CONFIGURED + exit≠0) اما
-// نتیجهٔ «کاربری» آن بود که پنجرهٔ کنسول بلافاصله بسته می‌شد و کاربر چیزی
-// نمی‌دید. مسیرِ راه‌اندازیِ پیش‌فرضِ «برنامهٔ ویندوزی بسته‌شده» هرگز به حالت
-// دسکتاپ نگاشت نشده بود.
+// Bug: in v0.3.2-beta.1, a "bare" hem-manager.exe run on Windows
+// (double-click, no environment variables at all) had no token, no
+// HEM_DESKTOP, nothing explicit — the fail-closed policy behaved correctly
+// (AUTH_NOT_CONFIGURED + exit≠0) but the "user-visible" result was the console
+// window closing instantly with nothing readable. The default launch path of
+// "the packaged Windows app" had never been mapped to desktop mode.
 //
-// مدل جدید — سه راه صریح + یک قاعدهٔ خودکارِ «محصور»:
-//   ۱) HEM_DESKTOP=1 یا --desktop (explicit — مثل قبل)؛
-//   ۲) قاعدهٔ بستهٔ ویندوزی: باینری کامپایل‌شده روی win32 «بدون هیچ توکن و
-//      بدون هیچ HEM_AGENT_AUTH» = دابل‌کلیکِ کاربر → دسکتاپ؛ توکن تصادفیِ
-//      همان اجرا ساخته می‌شود (همان مدل امن v0.3.2 §2 — هرگز open).
-//      صراحتِ کاربر همیشه برنده است: اگر HEM_AGENT_TOKEN یا HEM_AGENT_AUTH
-//      تنظیم شده باشند، قاعدهٔ خودکار خاموش است (حالت سرویس/توسعه دست‌نخورده).
-//   ۳) بقیهٔ حالت‌ها (لینوکس، اجرای توسعه با bun، ...) مثل قبل: قفلِ
-//      fail-closed — «شروع نمی‌شود» با خطای روشن.
+// New model — three explicit routes + one "enclosed" automatic rule:
+//   1) HEM_DESKTOP=1 or --desktop (explicit — as before);
+//   2) Windows packaged rule: a compiled binary on win32 "with no token and
+//      no HEM_AGENT_AUTH" = the user's double-click -> desktop; a random
+//      token is generated for that run (same secure model as v0.3.2 §2 —
+//      never open). User explicitness always wins: if HEM_AGENT_TOKEN or
+//      HEM_AGENT_AUTH is set, the automatic rule is off (service/dev runs
+//      untouched).
+//   3) All other cases (Linux, dev runs with bun, ...): as before, the
+//      fail-closed lock — "refuses to start" with a clear error.
 // ---------------------------------------------------------------------------
 
 export interface DesktopModeInput {
@@ -178,23 +185,23 @@ export interface DesktopModeInput {
   argv?: string[];
   /** process.platform */
   platform?: string;
-  /** آیا از داخل باینری کامپایل‌شده اجرا می‌شویم؟ (member $bunfs) */
+  /** Are we running from inside a compiled binary? ($bunfs member) */
   compiledBinary?: boolean;
 }
 
-/** خالص و قابل تست — «آیا این اجرا، اجرای دسکتاپ است؟» */
+/** Pure and testable — "is this run a desktop run?" */
 export function resolveDesktopMode(input: DesktopModeInput): boolean {
   const env = input.env ?? {};
   const argv = input.argv ?? [];
   const platform = input.platform ?? process.platform;
   const compiled = input.compiledBinary ?? false;
 
-  // ۱) صریح — همیشه برنده
+  // 1) Explicit — always wins
   if (env.HEM_DESKTOP === "1" || argv.includes("--desktop")) return true;
 
-  // ۲) قاعدهٔ بستهٔ ویندوزی — فقط وقتی «هیچ» صراحت احراز هویتی وجود ندارد.
-  //    توکن یا HEM_AGENT_AUTHِ تنظیم‌شده یعنی کاربر/سرویس خودش تصمیم گرفته.
-  //    مقدارهای خالی/فاصله‌ای «تنظیم‌شده» حساب نمی‌شوند (هم‌ارز agentAuthPolicy).
+  // 2) Windows packaged rule — only when there is NO explicit auth config at
+  //    all. A set token or HEM_AGENT_AUTH means the user/service decided.
+  //    Empty/whitespace values do NOT count as "set" (same as agentAuthPolicy).
   const tokenSet = !!(env.HEM_AGENT_TOKEN && env.HEM_AGENT_TOKEN.trim().length > 0);
   const authSet = !!(env.HEM_AGENT_AUTH && env.HEM_AGENT_AUTH.trim().length > 0);
   if (platform === "win32" && compiled && !tokenSet && !authSet) {
@@ -204,11 +211,12 @@ export function resolveDesktopMode(input: DesktopModeInput): boolean {
 }
 
 /**
- * حالت دسکتاپ از محیط واقعی این اجرا.
- * رفتار: اگر HEM_AGENT_TOKEN تنظیم نشده باشد، یک توکن تصادفی یک‌بارِ این اجرا
- * ساخته می‌شود، نشانی UI با ?token= چاپ می‌شود و مرورگر پیش‌فرض باز می‌شود
- * (index.ts). API توکن را از هدر X-HEM-Token «یا» کوکی hem_token می‌پذیرد
- * (api.ts) — تا UI بدون هیچ تغییری در حالت دسکتاپ کار کند.
+ * Desktop mode for this actual run.
+ * Behavior: if HEM_AGENT_TOKEN is not set, a random one-time token for this
+ * run is generated, the UI URL with ?token= is printed and the default
+ * browser opens (index.ts). The API accepts the token from the X-HEM-Token
+ * header "or" the hem_token cookie (api.ts) — so the UI works in desktop
+ * mode without any change.
  */
 export function desktopMode(): boolean {
   return resolveDesktopMode({
@@ -220,29 +228,31 @@ export function desktopMode(): boolean {
 }
 
 // ---------------------------------------------------------------------------
-// ریشهٔ مخزن پایتونِ نصب‌کننده (منبع واحد نصب) — زنجیرهٔ حل (v0.3.1 §1):
-//   ۱) HEM_PROJECT_ROOT صریح (برای تست/CI) — هرچه تنظیم شده، همان؛
-//   ۲) بستهٔ packaged: <پوشهٔ فایل اجرایی>/installer — exe ویندوزی و باینری
-//      لینوکسی هر دو این چیدمان را از build-windows.sh می‌گیرند؛ در حالت
-//      توسعهٔ با bun، process.execPath خودِ bun است و کنارش installer/ نیست
-//      → طبیعتاً به مرحلهٔ بعد می‌افتد؛
-//   ۳) checkout توسعه: نسبت به محل همین فایل منبع (سه پوشه بالاتر) — فقط
-//      هنگام اجرا از سورس معقول است؛ در باینری کامپایل‌شده import.meta.dir
-//      داخل فایل‌سیستم مجازی bun (/$bunfs) است و این کاندید رد می‌شود.
-//   هیچ «مسیر پیش‌فرضِ توسعه‌دهنده»ای وجود ندارد. اگر هیچ کاندید معتبری نبود،
-//   «انتظارِ packaged» برگردانده می‌شود تا خطای تماس‌گیرنده همان مسیر را
-//   شامل باشد — توقف صادقانه، بدون fallback و بدون ادعای آماده بودن.
+// Python installer repository root (single source of installation) —
+// resolution chain (v0.3.1 §1):
+//   1) explicit HEM_PROJECT_ROOT (for tests/CI) — whatever is set, wins;
+//   2) packaged layout: <executable folder>/installer — both the Windows exe
+//      and the Linux binary get this layout from build-windows.sh; in a dev
+//      run with bun, process.execPath is bun itself with no installer/ next
+//      to it -> naturally falls through to the next candidate;
+//   3) dev checkout: relative to this source file's location (three folders
+//      up) — only meaningful when running from source; in a compiled binary
+//      import.meta.dir is inside bun's virtual filesystem (/$bunfs) and this
+//      candidate is rejected.
+//   There is NO "developer default path". If no candidate is valid, the
+//   "packaged expectation" is returned so the caller's error message can
+//   include that path — an honest stop, no fallback, no false readiness.
 // ---------------------------------------------------------------------------
 
-/** نام فایل مرجع — مخزنِ بدون install.sh معتبر نیست */
+/** Marker file — a repository without install.sh is not valid */
 const INSTALL_MARKER = "install.sh";
 
-/** پوشهٔ فایل اجرایی — در حالت توسعهٔ با bun، پوشهٔ خودِ باینری bun است */
+/** Executable folder — in a bun dev run, the folder of the bun binary itself */
 function processExeDir(): string {
   return path.dirname(process.execPath);
 }
 
-/** true وقتی از داخل باینری کامپایل‌شده اجرا می‌شویم (fs مجازی bun — $bunfs در هر دو پلتفرم) */
+/** true when running from inside a compiled binary (bun virtual fs — $bunfs on both platforms) */
 function inCompiledBinaryRun(): boolean {
   return inCompiledBinary(import.meta.dir);
 }
@@ -255,9 +265,9 @@ export interface InstallerRootCandidate {
 }
 
 /**
- * فهرست مرتبِ کاندیدها به‌صورت «خالص» و قابل تست — ورودی‌های ساختگی می‌گیرد؛
- * مقدار undefined/خالی یعنی «آن کاندید اصلاً در نظر گرفته نشود».
- * ترتیب همیشه: env، سپس packaged، سپس dev.
+ * Ordered candidate list as a pure, testable function — takes mock inputs;
+ * undefined/empty means "do not consider that candidate at all".
+ * Order is always: env, then packaged, then dev.
  */
 export function installerRootCandidates(
   explicit?: string,
@@ -269,9 +279,10 @@ export function installerRootCandidates(
   if (env) list.push({ source: "env", path: path.resolve(env) });
   if (exeDir) list.push({ source: "packaged", path: path.join(exeDir, "installer") });
   const devSrc = (srcDir ?? "").trim();
-  // در باینری کامپایل‌شده، سورس داخل fs مجازی bun ($bunfs) است — کاندید توسعه
-  // معنا ندارد. تشخیص عضویت «$bunfs» است، نه پیشوند پوزیکس (باگ ویندوزی v0.3.1:
-  // C:\$bunfs\root با startsWith("/$bunfs") رد نمی‌شد و کاندید بی‌معنای dev می‌ساخت).
+  // In a compiled binary, the source is inside bun's virtual fs ($bunfs) — a
+  // dev candidate makes no sense. Detection is membership of "$bunfs", not a
+  // POSIX prefix (Windows bug v0.3.1: C:\$bunfs\root was not rejected by
+  // startsWith("/$bunfs") and produced a meaningless dev candidate).
   if (devSrc && !inCompiledBinary(devSrc)) {
     list.push({ source: "dev", path: path.resolve(devSrc, "..", "..", "..", "headscale-easy-manager") });
   }
@@ -293,18 +304,19 @@ export interface InstallerRootSkipped {
 
 export interface InstallerRootStatus {
   ok: boolean;
-  /** مسیر انتخاب‌شده؛ در حالت ناکام = «انتظارِ packaged» (برای پیام خطا) */
+  /** Chosen path; on failure = the "packaged expectation" (for the error message) */
   path: string;
   source: InstallerRootSource;
-  /** همهٔ کاندیدهای بررسی‌شده با نتیجهٔ وجود install.sh */
+  /** All checked candidates with the result of the install.sh existence check */
   tried: InstallerRootTry[];
-  /** کاندیدهایی که اصلاً بررسی نشدند و چرا (امروز فقط dev در باینری کامپایل‌شده) */
+  /** Candidates not checked at all, and why (today only dev inside a compiled binary) */
   skipped: InstallerRootSkipped[];
 }
 
 /**
- * حل‌کنندهٔ قابل تست: نخستین کاندیدی که install.sh دارد برنده است؛ اگر هیچ‌کدام
- * نبود، ok=false و path = همان «انتظارِ packaged» (یا آخرین کاندید) است.
+ * Testable resolver: the first candidate that has install.sh wins; if none
+ * does, ok=false and path = the "packaged expectation" (or the last
+ * candidate).
  */
 export function resolveInstallerRoot(
   candidates: InstallerRootCandidate[],
@@ -324,7 +336,7 @@ export function resolveInstallerRoot(
   return { ok: false, path: fallback, source: "none", tried, skipped };
 }
 
-/** وضعیت واقعیِ همین اجرا — برای پیام‌های خطای غنی و UX. */
+/** Real status of this run — for rich error messages and UX. */
 export function installerRootStatus(): InstallerRootStatus {
   const skipped: InstallerRootSkipped[] = [];
   if (inCompiledBinaryRun()) {
@@ -340,16 +352,21 @@ export function installerRootStatus(): InstallerRootStatus {
 }
 
 /**
- * ریشهٔ مخزن پایتونِ نصب‌کننده (منبع واحد نصب) — برای prepare/تاربال.
- * رفتار: مسیر معتبرِ حل‌شده؛ اگر هیچ کاندید معتبری نبود، «انتظارِ packaged».
+ * Python installer repository root (single source of installation) — for
+ * prepare/tarball.
+ * Behavior: the resolved valid path; if no candidate is valid, the "packaged
+ * expectation".
  */
 export function projectRoot(): string {
   return installerRootStatus().path;
 }
 
 /**
- * پیام فارسیِ غنی برای «مخزن نصب‌کننده پیدا نشد» — همهٔ مسیرهای بررسی‌شده
- * با نتیجهٔ وجودشان فهرست می‌شوند؛ توقف صادقانه، هیچ ادعای آماده/موفق نیست.
+ * Rich Persian message for "installer repository not found" — this message is
+ * returned to the browser UI (install wizard, api.ts error handler), so it
+ * deliberately stays in Persian (product UI language). All checked paths are
+ * listed with their existence result; an honest stop, never a false
+ * success/ready claim.
  */
 export function installerRootErrorMessage(status: InstallerRootStatus): string {
   const envT = status.tried.find((t) => t.source === "env");

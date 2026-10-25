@@ -1,4 +1,4 @@
-// حسابرسی JSONL — هر رشته‌ای که وارد لاگ می‌شود حتماً از redact() می‌گذرد.
+// JSONL audit log — every string written to the log goes through redact().
 
 import * as fs from "node:fs";
 import * as path from "node:path";
@@ -15,7 +15,7 @@ export class AuditLogger {
     this.redactor = redactor;
   }
 
-  /** درج یک رکورد — رشته‌ها همیشه پاک‌سازی می‌شوند */
+  /** Append one record — strings are always sanitized */
   log(entry: Omit<AuditEntry, "ts"> & { ts?: string }): void {
     const record: AuditEntry = {
       ts: entry.ts ?? new Date().toISOString(),
@@ -28,7 +28,7 @@ export class AuditLogger {
     fs.appendFileSync(this.file, JSON.stringify(record) + "\n");
   }
 
-  /** خواندن آخرین n رکورد (به ترتیب قدیم→جدید) */
+  /** Read the last n records (oldest→newest order) */
   tail(limit = 100): AuditEntry[] {
     try {
       const text = fs.readFileSync(this.file, "utf8");

@@ -1,38 +1,38 @@
-// exepath — تشخیص محیط اجرا و «پوشهٔ کنار برنامه» — واحد مشترک index.ts و config.ts.
+// exepath — runtime environment detection and "the folder next to the program" — shared unit for index.ts and config.ts.
 //
-// باگ v0.3.1 (ویندوز): نشانگر فایل‌سیستم مجازی باندل bun در باینری کامپایل‌شده
-// روی هر دو پلتفرم «$bunfs» است، اما فقط روی پوزیکس پیشوند مطلق «/» دارد:
-//   لینوکس:  /$bunfs/root/…
-//   ویندوز:  C:\$bunfs\root\…   (حرف درایو + بک‌اسلش)
-// بررسی قدیمیِ startsWith("/$bunfs") روی ویندوز false می‌شد ← exeDir به fs مجازی
-// اشاره می‌کرد ← ui/ پیدا نمی‌شد ← GET / به‌جای UI، JSON مبهم سلامت می‌داد.
-// راه‌حل: membership («شامل $bunfs بودن») به‌جای پیشوند مطلق پوزیکس.
+// v0.3.1 bug (Windows): the bun bundle virtual-filesystem marker in the compiled binary
+// is "$bunfs" on both platforms, but only POSIX has the absolute "/" prefix:
+//   Linux:   /$bunfs/root/…
+//   Windows: C:\$bunfs\root\…   (drive letter + backslash)
+// The old startsWith("/$bunfs") check was false on Windows ← exeDir pointed into the
+// virtual fs ← ui/ was not found ← GET / returned an ambiguous health JSON instead of the UI.
+// Fix: membership ("contains $bunfs") instead of the POSIX absolute prefix.
 
 import * as path from "node:path";
 
-/** نشانگر fs مجازی باندل bun در باینری کامپایل‌شده — رشتهٔ ثابت bun روی هر دو پلتفرم */
+/** Marker of the bun bundle virtual fs in the compiled binary — a constant bun string on both platforms */
 const BUNFS_MARKER = "$bunfs";
 
 /**
- * true وقتی مسیر سورسِ فعلی داخل فایل‌سیستم مجازی bun است — یعنی از داخل
- * باینری کامپایل‌شده (exe ویندوزی / باینری لینوکسی) اجرا می‌شویم.
- * خالص و قابل تست: مسیر را می‌گیرد، محیط واقعی را نمی‌خواند.
+ * true when the current source path is inside the bun virtual filesystem — i.e. we are
+ * running from the compiled binary (Windows exe / Linux binary).
+ * Pure and testable: takes the path, does not read the real environment.
  */
 export function inCompiledBinary(importMetaDir: string): boolean {
   return importMetaDir.includes(BUNFS_MARKER);
 }
 
 /**
- * «پوشهٔ کنار فایل اجرایی برنامه» — جایی که ui/ و installer/ بستهٔ رسمی قرار دارند:
- *   • باینری کامپایل‌شده: dirname(process.execPath) — مسیر «واقعی» خود فایل اجرایی؛
- *     در باینری کامپایل‌شده import.meta.dir به fs مجازی bun اشاره می‌کند و ui/
- *     هرگز آنجا نیست (ui/ کنار exe بسته‌بندی می‌شود، نه داخل آن).
- *   • حالت توسعه با bun: همان پوشهٔ سورس (index.ts) — process.execPath خودِ bun
- *     است و کنارش چیزی از این برنامه نیست.
+ * "The folder next to the program executable" — where the official package's ui/ and installer/ live:
+ *   • Compiled binary: dirname(process.execPath) — the executable file's "real" path;
+ *     in a compiled binary import.meta.dir points into the bun virtual fs and ui/ is
+ *     never there (ui/ is packaged next to the exe, not inside it).
+ *   • Dev mode with bun: the source folder (index.ts) — process.execPath is bun itself
+ *     and nothing of this program lives next to it.
  *
- * dirname باید با سبک مسیرِ execPath هم‌خوان باشد (ویندوز: بک‌اسلش/حرف درایو؛
- * پوزیکس: اسلش) — تشخیص از خود رشته، تا در تست‌ها روی هر میزبان قابل شبیه‌سازی
- * باشد و در اجرای واقعی با path پیش‌فرض پلتفرم یکی باشد.
+ * dirname must match the execPath's path style (Windows: backslash/drive letter;
+ * POSIX: slash) — detection is derived from the string itself, so tests can simulate
+ * any host and real execution matches the platform's default path module.
  */
 export function programDir(importMetaDir: string, execPath: string = process.execPath): string {
   if (!inCompiledBinary(importMetaDir)) return importMetaDir;

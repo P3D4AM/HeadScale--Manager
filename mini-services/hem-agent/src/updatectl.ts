@@ -1,5 +1,5 @@
-// ارتقا (قرارداد §4) — check از نسخهٔ واقعی سرور + پین پروژه؛ execute با hsctl واقعی
-// به‌صورت job استریمی با تجزیهٔ گام‌ها و وضعیت نهایی آگاه از rollback (خروجی صادقانهٔ 5-b).
+// Update (contract §4) — check compares the real server version + the project pin; execute uses the real hsctl
+// as a streaming job with step parsing and a rollback-aware final state (honest output from 5-b).
 
 import { Router, type Request, type Response } from "express";
 import { randomUUID } from "node:crypto";
@@ -32,8 +32,8 @@ export interface MaintenanceDeps {
   jobs: JobManager;
 }
 
-// نسخهٔ پین‌شدهٔ headscale — از constants.py مخزن (منبع واحد) در اولین فراخوانی
-// خوانده می‌شود؛ اگر فایل نبود، مقدار پین زیر (هم‌گام با PINNED_HS_VERSION = "0.29.5").
+// The pinned headscale version — read from constants.py of the repo (single source) on first
+// call; if the file is missing, the pin below (kept in sync with PINNED_HS_VERSION = "0.29.5").
 let cachedPin: string | null = null;
 export function pinnedHsVersion(): string {
   if (cachedPin) return cachedPin;
@@ -45,9 +45,9 @@ export function pinnedHsVersion(): string {
       return cachedPin;
     }
   } catch {
-    /* مخزن در دسترس نیست — پین محلی */
+    /* repo unavailable — local pin */
   }
-  cachedPin = "0.29.5"; // PINNED_HS_VERSION مخزن — در صورت تغییر، اینجا هم به‌روز شود
+  cachedPin = "0.29.5"; // the repo PINNED_HS_VERSION — update here too if it changes
   return cachedPin;
 }
 
@@ -55,7 +55,7 @@ export function createUpdateRouter(deps: MaintenanceDeps): Router {
   const r = Router({ mergeParams: true });
   const sid = (req: Request): string => paramOf(req.params.sid);
 
-  // GET /api/s/:sid/update/check — نسخهٔ فعلی (سرور واقعی) در برابر پین پروژه
+  // GET /api/s/:sid/update/check — the current (real server) version against the project pin
   r.get(
     "/check",
     wrap(async (req, res) => {
@@ -78,7 +78,7 @@ export function createUpdateRouter(deps: MaintenanceDeps): Router {
     }),
   );
 
-  // POST /api/s/:sid/update/execute {version?, confirm:true} — job استریمی واقعی
+  // POST /api/s/:sid/update/execute {version?, confirm:true} — real streaming job
   r.post(
     "/execute",
     wrap(async (req, res) => {
@@ -128,7 +128,7 @@ export function createUpdateRouter(deps: MaintenanceDeps): Router {
         },
       })
         .then((result) => {
-          // وضعیت نهایی آگاه از rollback: updated / rolled_back / rollback_failed / failed
+          // rollback-aware final state: updated / rolled_back / rollback_failed / failed
           deps.jobs.jobDone(jobId, result.ok, result.exitCode, result.summary, result.finalState);
           deps.audit.log({
             sessionId: sid_,

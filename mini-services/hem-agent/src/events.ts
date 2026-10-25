@@ -1,12 +1,12 @@
-// socket.io (قرارداد §5) — اتاق‌های sid:<id> و job:<id>
-// رویدادهای سرور→کلاینت: conn:status, job:log, job:stage, job:progress, job:done, job:error
-// کلاینت→سرور: job:cancel (بستن کانال + SIGINT)، subscribe/unsubscribe
+// socket.io (contract §5) — rooms sid:<id> and job:<id>
+// Server→client events: conn:status, job:log, job:stage, job:progress, job:done, job:error
+// Client→server: job:cancel (close channel + SIGINT), subscribe/unsubscribe
 //
-// Task 5-d — قابلیت اطمینان job:
-//  • هر job بافر حلقه‌ای از آخرین ۵۰۰ خط لاگ دارد؛ کلاینتی که «بعد از شروع job»
-//    متصل می‌شود از طریق REST fallback (GET /api/jobs/:id/log?since=…) همهٔ خطوط
-//    را می‌گیرد و از طریق socket.io فقط خطوط بعدی را زنده دریافت می‌کند.
-//  • رکورد job تا ۱۰ دقیقه پس از پایان نگه داشته می‌شود (سپس sweep می‌شود).
+// Task 5-d — job reliability:
+//  • Every job has a ring buffer of the last 500 log lines; a client that connects
+//    "after the job started" gets all lines via the REST fallback
+//    (GET /api/jobs/:id/log?since=…) and receives only the subsequent lines live via socket.io.
+//  • A job record is kept up to 10 minutes after completion (then swept).
 
 import type { Server as IOServer, Socket } from "socket.io";
 import type { SessionManager } from "./sessions";
@@ -14,7 +14,7 @@ import type { JobInfo, JobLogLine, JobLogPage } from "./types";
 import type { AgentAuthMode } from "./config";
 import { timingSafeTokenMatch } from "./tokenmatch";
 
-/** آنچه SessionManager از لاگر لازم دارد (پیاده‌سازی واقعی: src/audit.ts) */
+/** What SessionManager needs from a logger (real implementation: src/audit.ts) */
 export interface AuditLoggerLike {
   log(entry: {
     sessionId?: string;
@@ -31,17 +31,17 @@ export interface RunningJob {
   sessionId: string;
   startedAt: number;
   cancelled: boolean;
-  /** بستن استریم در حال اجرا (channel.close + سیگنال INT در execCancellable) */
+  /** Stop the running stream (channel.close + INT signal in execCancellable) */
   cancel: () => void;
 }
 
 const ROOM_RE = /^(sid|job):[A-Za-z0-9_-]+$/;
 
-/** حداکثر خطوط لاگ نگه‌داشته‌شده در بافر حلقه‌ای هر job */
+/** Max log lines kept in each job's ring buffer */
 const JOB_LOG_RING = 500;
-/** نگه‌داشتن رکورد jobهای تمام‌شده تا ۱۰ دقیقه برای REST fallback */
+/** Keep finished job records up to 10 minutes for the REST fallback */
 const JOB_RETENTION_MS = 10 * 60 * 1000;
-/** حداکثر تعداد رکورد job در حافظه (قدیمی‌ترین تمام‌شده حذف می‌شود) */
+/** Max job records in memory (oldest finished gets evicted) */
 const JOB_MAX_RECORDS = 200;
 
 interface JobRecord extends RunningJob {
@@ -61,7 +61,7 @@ export class JobManager {
   private io: IOServer | null = null;
   private sweeper: ReturnType<typeof setInterval> | null = null;
 
-  /** اتصال io (توسط attachEvents) */
+  /** Attach io (called by attachEvents) */
   attach(io: IOServer): void {
     this.io = io;
     if (!this.sweeper) {
@@ -91,7 +91,7 @@ export class JobManager {
     return [...this.jobs.values()].map((j) => this.info(j)!);
   }
 
-  /** لغو job — کانال باز بسته می‌شود (SIGINT + close) و job خودش نتیجه را صادقانه اعلام می‌کند */
+  /** Cancel a job — the open channel is closed (SIGINT + close) and the job itself reports the result honestly */
   cancel(id: string): boolean {
     const job = this.jobs.get(id);
     if (!job || job.cancelled) return false;
@@ -104,7 +104,7 @@ export class JobManager {
     return true;
   }
 
-  /** علامت‌گذاری پایان — رکورد برای REST fallback نگه داشته می‌شود (نه حذف فوری) */
+  /** Mark finished — the record is kept for the REST fallback (not deleted immediately) */
   finish(id: string): void {
     const job = this.jobs.get(id);
     if (job && job.status === "running") {
@@ -113,13 +113,13 @@ export class JobManager {
     }
   }
 
-  /** وضعیت کامل job (برای GET /api/jobs/:id) */
+  /** Full job status (for GET /api/jobs/:id) */
   getStatus(id: string): JobInfo | undefined {
     const job = this.jobs.get(id);
     return job ? this.info(job) : undefined;
   }
 
-  /** صفحهٔ لاگ بافرشده (برای GET /api/jobs/:id/log?since=N) */
+  /** Buffered log page (for GET /api/jobs/:id/log?since=N) */
   getLog(id: string, since = 0): JobLogPage | undefined {
     const job = this.jobs.get(id);
     if (!job) return undefined;
@@ -131,7 +131,7 @@ export class JobManager {
     };
   }
 
-  /** حذف رکوردهای تمام‌شدهٔ منقضی + محدودکردن تعداد کل */
+  /** Drop expired finished records + cap the total count */
   private sweep(): void {
     const now = Date.now();
     for (const [id, job] of [...this.jobs.entries()]) {
@@ -170,7 +170,7 @@ export class JobManager {
     };
   }
 
-  // ---- فرستنده‌های رویداد به اتاق job:<id> ----
+  // ---- Event emitters to room job:<id> ----
   jobLog(jobId: string, line: string, stream: "stdout" | "stderr" = "stdout"): void {
     const job = this.jobs.get(jobId);
     if (job) {
@@ -220,15 +220,15 @@ export class JobManager {
 }
 
 /**
- * سیم‌کشی کامل رویدادها: اتاق‌ها + conn:status + job:cancel
- *  v0.3.1 §4 + v0.3.2 §2: احراز هویت WebSocket «هم‌ارزِ» HTTP —
- *   • حالت token: اتصال بدون هدر X-HEM-Token / کوکی hem_token معتبر، بلافاصله
- *     قطع می‌شود؛ هیچ رویداد حساسی (رویدادهای job و conn) به کلاینتی بدون توکن می‌رسد.
- *   • حالت open (استثنای مستندِ توسعهٔ محلی — loopback): اتصال‌ها باز هستند؛
- *     index.ts این حالت را فقط روی 127.0.0.۱ می‌پذیرد.
- *   • بدون توکن و بدون open: «قفل» — هر اتصالی بلافاصله قطع می‌شود
- *     (fail-closed؛ هم‌ارزِ 503 AUTH_NOT_CONFIGURED در HTTP).
- * مقایسه توکن HTTP و WS یکسان است (timing-safe، همان هدر/کوکی) — سازگاری الزامی.
+ * Full event wiring: rooms + conn:status + job:cancel
+ *  v0.3.1 §4 + v0.3.2 §2: WebSocket auth is "equivalent" to HTTP —
+ *   • token mode: a connection without a valid X-HEM-Token header / hem_token cookie is
+ *     dropped immediately; no sensitive event (job and conn events) reaches an unauthenticated client.
+ *   • open mode (documented local-dev exception — loopback): connections are accepted;
+ *     index.ts allows this mode only on 127.0.0.1.
+ *   • No token and no open: "locked" — every connection is dropped immediately
+ *     (fail-closed; the WS equivalent of HTTP 503 AUTH_NOT_CONFIGURED).
+ * HTTP and WS token comparison is identical (timing-safe, same header/cookie) — parity is mandatory.
  */
 export function attachEvents(
   io: IOServer,
@@ -245,12 +245,12 @@ export function attachEvents(
 
   io.on("connection", (socket: Socket) => {
     if (authMode === "open") {
-      // استثنای مستندِ توسعهٔ محلی — index.ts آن را فقط روی loopback می‌پذیرد
+      // Documented local-dev exception — index.ts allows it on loopback only
     } else if (token && handshakeTokenMatches(socket, token)) {
-      // توکن معتبر — اتصال مجاز است
+      // Valid token — connection allowed
     } else {
-      // بی‌توکن/توکن نادرست (حالت token) یا «قفل» (بدون توکن و بدون open):
-      // بدون هیچ رویداد/داده‌ای قطع می‌شود. مقدار توکن هرگز چاپ نمی‌شود.
+      // No/invalid token (token mode) or "locked" (no token and no open):
+      // dropped without any event/data. The token value is never printed.
       console.log(
         `[hem-agent] ws rejected (${token ? "no/invalid token" : "auth not configured"}) from ${socket.handshake.address ?? "unknown"}`,
       );
@@ -271,7 +271,7 @@ export function attachEvents(
   });
 }
 
-/** توکن دست‌داداریِ socket.io: هدر X-HEM-Token یا کوکی hem_token (v0.3.1 §4) */
+/** socket.io handshake token: X-HEM-Token header or hem_token cookie (v0.3.1 §4) */
 function handshakeTokenMatches(socket: Socket, expected: string): boolean {
   const h = socket.handshake.headers;
   const header = h["x-hem-token"];

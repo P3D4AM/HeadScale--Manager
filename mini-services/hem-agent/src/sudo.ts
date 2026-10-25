@@ -1,8 +1,8 @@
-// تشخیص حالت sudo روی سرور (قرارداد §3.4) — کاملاً واقعی:
-//  1) کاربر root؟
+// Detect the server sudo mode (contract §3.4) — fully real:
+//  1) Is the user root?
 //  2) sudo -n true → nopasswd
-//  3) sudo -S با رمز از stdin → password (اگر رمز واقعاً پذیرفته شد؛ وگرنه none)
-//  4) هیچ‌کدام → none (صادقانه: با آنچه داریم sudo ممکن نیست)
+//  3) sudo -S with password from stdin → password (only if the password is actually accepted; otherwise none)
+//  4) None of these → none (honest: sudo is not possible with what we have)
 
 import { HemError } from "./errors";
 import type { SudoMode } from "./types";
@@ -10,7 +10,7 @@ import type { SshSession } from "./ssh";
 
 export interface SudoDetectContext {
   username: string;
-  /** رمز عبور SSH — در حافظهٔ نشست نگه داشته می‌شود و فقط از stdin استفاده می‌شود */
+  /** SSH password — kept in session memory and used only via stdin */
   password?: string;
 }
 
@@ -19,25 +19,25 @@ export async function detectSudoMode(ssh: SshSession, ctx: SudoDetectContext): P
 
   const res = await ssh.exec("sudo -n true 2>&1", { timeoutMs: 10_000 }).catch(() => null);
   if (res && res.code === 0) return "nopasswd";
-  if (res && res.code === 127) return "none"; // خود sudo نصب نیست
+  if (res && res.code === 127) return "none"; // sudo itself is not installed
 
   const out = `${res?.stderr ?? ""}\n${res?.stdout ?? ""}`;
   if (/a password is required|sudo: -n|terminal/i.test(out)) {
     if (!ctx.password) return "none";
-    // آزمون واقعی رمز — رمز فقط از stdin
+    // Real password test — password only via stdin
     const res2 = await ssh
       .exec("sudo -S -p '' -k true", { stdin: ctx.password + "\n", timeoutMs: 12_000 })
       .catch(() => null);
     if (res2 && res2.code === 0) return "password";
-    return "none"; // رمز برای sudo پذیرفته نشد (نادرست یا بدون امتیار sudoer)
+    return "none"; // password not accepted for sudo (wrong or not a sudoer)
   }
   return "none";
 }
 
 /**
- * ساخت فرمان sudo-wrapped برای jobهای قابل‌لغو (execCancellable).
- * هم‌ارز SshSession.execSudo است اما به‌صورت رشته + stdin برمی‌گردد تا با
- * execCancellable ترکیب شود. حالت none → SUDO_REQUIRED صادقانه.
+ * Build a sudo-wrapped command for cancellable jobs (execCancellable).
+ * Equivalent to SshSession.execSudo but returns a string + stdin so it can be
+ * combined with execCancellable. none mode → honest SUDO_REQUIRED.
  */
 export function buildSudoInvocation(
   cmd: string,

@@ -1,4 +1,4 @@
-// تست اتصال: رمز/کلید، TOFU دومرحله‌ای، مغایرت کلید میزبان (409)، exec/timeout، قطع
+// Connect tests: password/key, two-step TOFU, host-key mismatch (409), exec/timeout, disconnect
 import { afterAll, beforeAll, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
@@ -13,7 +13,7 @@ let srv: ListeningServer;
 
 beforeAll(async () => {
   ts = await startTestServer({ port: 0 });
-  stack = buildTestStack({ authMode: "open" }); // v0.3.2 §2: تست منطق کسب‌وکار در استثنای مستندِ توسعه (بدون احراز هویت)
+  stack = buildTestStack({ authMode: "open" }); // v0.3.2 §2: business-logic tests under the documented dev exception (no auth)
   srv = await listenApp(stack.app);
 }, 20_000);
 
@@ -23,11 +23,11 @@ afterAll(async () => {
   await ts.close();
 });
 
-// پورت ۲۲۲۲ ممکن است توسط سرور دمو (bun run test/server.ts) اشغال باشد → پورت لحظه‌ای
+// port 2222 may be taken by the demo server (bun run test/server.ts) → ephemeral port
 const base = () => srv.baseUrl;
 const srvPort = (): number => ts.port;
 
-test("اتصال با رمز: fingerprint-required → confirm → connected", async () => {
+test("password connect: fingerprint-required → confirm → connected", async () => {
   const r1 = await fetch(`${base()}/api/connect`, {
     method: "POST",
     headers: { "content-type": "application/json" },
@@ -54,7 +54,7 @@ test("اتصال با رمز: fingerprint-required → confirm → connected", a
   expect(c1.fingerprint.hash).toMatch(/^SHA256:/);
   expect(c1.fingerprint.base64Md5).toMatch(/^[0-9A-F:]+$/);
 
-  // تا تأیید نشود، نشست قابل استفاده نیست
+  // until confirmed, the session is not usable
   const probe = await fetch(`${base()}/api/s/${c1.sessionId}/probe`);
   expect(probe.status).toBe(409);
   const pbody = (await probe.json()) as { error: string };
@@ -71,17 +71,17 @@ test("اتصال با رمز: fingerprint-required → confirm → connected", a
   expect(c2.serverInfo.fingerprint?.algo).toBe("ssh-rsa");
   expect(["root", "nopasswd", "password", "none"]).toContain(c2.sudoMode);
 
-  // در فهرست نشست‌ها
+  // in the session list
   const ls = (await (await fetch(`${base()}/api/sessions`)).json()) as { sessions: { id: string; status: string }[] };
   const mine = ls.sessions.find((s) => s.id === c1.sessionId);
   expect(mine?.status).toBe("connected");
 
-  // exec واقعی echo hello از طریق نشست
+  // a real exec of echo hello through the session
   const res = await stack.manager.exec(c1.sessionId, "echo hello");
   expect(res.code).toBe(0);
   expect(res.stdout.trim()).toBe("hello");
 
-  // قطع
+  // disconnect
   const dis = await fetch(`${base()}/api/disconnect`, {
     method: "POST",
     headers: { "content-type": "application/json" },
@@ -92,7 +92,7 @@ test("اتصال با رمز: fingerprint-required → confirm → connected", a
   expect(ls2.sessions.find((s) => s.id === c1.sessionId)).toBeUndefined();
 }, 20_000);
 
-test("رمز نادرست → AUTH_FAILED (کلید میزبان همین سرور قبلاً شناخته شده)", async () => {
+test("wrong password → AUTH_FAILED (this server's host key is already known)", async () => {
   const r1 = await fetch(`${base()}/api/connect`, {
     method: "POST",
     headers: { "content-type": "application/json" },
@@ -106,12 +106,12 @@ test("رمز نادرست → AUTH_FAILED (کلید میزبان همین سرو
       },
     }),
   });
-  // کلید میزبان شناخته‌شده است → مستقیم به userauth می‌رود و آنجا رد می‌شود
+  // the host key is known → goes straight to userauth and is rejected there
   expect(r1.status).toBe(401);
   const c1 = (await r1.json()) as { error: string };
   expect(c1.error).toBe("AUTH_FAILED");
 
-  // با مسیر پارک هم آزمایش می‌کنیم: کلید را موقتاً فراموش کن → park → confirm → AUTH_FAILED
+  // also exercise the park path: temporarily forget the key → park → confirm → AUTH_FAILED
   await fetch(`${base()}/api/known-hosts/forget`, {
     method: "POST",
     headers: { "content-type": "application/json" },
@@ -140,7 +140,7 @@ test("رمز نادرست → AUTH_FAILED (کلید میزبان همین سرو
   expect(p2.status).toBe(401);
   expect(((await p2.json()) as { error: string }).error).toBe("AUTH_FAILED");
 
-  // کلید میزبان معتبر را دوباره تأیید می‌کنیم تا تست‌های بعدی ساده باشند
+  // re-confirm the valid host key so later tests are simple
   const okSid = await connectFull({ authMethod: "password", password: TEST_PASSWORD });
   await fetch(`${base()}/api/disconnect`, {
     method: "POST",
@@ -149,7 +149,7 @@ test("رمز نادرست → AUTH_FAILED (کلید میزبان همین سرو
   });
 }, 20_000);
 
-test("اتصال با کلید ed25519 (بدون passphrase)", async () => {
+test("connect with an ed25519 key (no passphrase)", async () => {
   const keyContent = readFileSync(join(import.meta.dir, "fixtures", "id_ed25519"), "utf8");
   const sid = await connectFull({
     authMethod: "key",
@@ -165,9 +165,9 @@ test("اتصال با کلید ed25519 (بدون passphrase)", async () => {
   });
 });
 
-test("اتصال با کلید ed25519 دارای passphrase درست/نادرست", async () => {
+test("connect with an ed25519 key that has a passphrase — correct/incorrect", async () => {
   const keyContent = readFileSync(join(import.meta.dir, "fixtures", "id_ed25519_pass"), "utf8");
-  // passphrase نادرست → AUTH_FAILED
+  // wrong passphrase → AUTH_FAILED
   const sshBad = new SshSession({
     host: TEST_HOST,
     port: srvPort(),
@@ -185,7 +185,7 @@ test("اتصال با کلید ed25519 دارای passphrase درست/نادرس
   expect(badCode).toBe("AUTH_FAILED");
   sshBad.close();
 
-  // passphrase درست از طریق API (کلید همین سرور شناخته‌شده است → مستقیم connected)
+  // correct passphrase via the API (this server's key is known → straight to connected)
   const sid = await connectFull({ authMethod: "key", keyContent, passphrase: "test-pass" });
   const res = await stack.manager.exec(sid, "echo via-key-pass");
   expect(res.stdout.trim()).toBe("via-key-pass");
@@ -196,7 +196,7 @@ test("اتصال با کلید ed25519 دارای passphrase درست/نادرس
   });
 });
 
-test("exec: استریم خروجی + مهلت زمانی + سلامت بعد از timeout", async () => {
+test("exec: output streaming + timeout + health after a timeout", async () => {
   const ssh = new SshSession({
     host: TEST_HOST,
     port: srvPort(),
@@ -207,7 +207,7 @@ test("exec: استریم خروجی + مهلت زمانی + سلامت بعد ا
   const outcome = await ssh.connect();
   expect(outcome.kind).toBe("connected");
 
-  // استریم واقعی: چند خط خروجی
+  // real streaming: a few output lines
   const chunks: string[] = [];
   const res = await ssh.exec("for i in 1 2 3 4 5; do echo \"line$i\"; done", {
     onStdout: (c) => chunks.push(c),
@@ -216,7 +216,7 @@ test("exec: استریم خروجی + مهلت زمانی + سلامت بعد ا
   expect(res.stdout).toContain("line5");
   expect(chunks.join("")).toContain("line1");
 
-  // timeout: sleep 10 با مهلت ۸۰۰ms
+  // timeout: sleep 10 with an 800ms cap
   let timedOut = false;
   try {
     await ssh.exec("sleep 10", { timeoutMs: 800 });
@@ -225,18 +225,18 @@ test("exec: استریم خروجی + مهلت زمانی + سلامت بعد ا
   }
   expect(timedOut).toBe(true);
 
-  // اتصال هنوز سالم است
+  // the connection is still healthy
   const alive = await ssh.exec("echo still-alive");
   expect(alive.code).toBe(0);
   expect(alive.stdout.trim()).toBe("still-alive");
   ssh.close();
 });
 
-test("مغایرت کلید میزبان: سرور با کلید جدید → 409 HOSTKEY_CHANGED → forget → اتصال مجدد", async () => {
-  // کلید سرور فعلی در تست اول ذخیره شده است — سرور را با کلید جدید «روی همان پورت» ری‌استارت می‌کنیم
+test("host-key mismatch: server with a new key → 409 HOSTKEY_CHANGED → forget → reconnect", async () => {
+  // the current server key was stored in the first test — restart the server with a new key "on the same port"
   const oldPort = srvPort();
   await ts.close();
-  ts = await startTestServer({ port: oldPort }); // همان پورت، کلید میزبان جدید (هر بار RSA تازه)
+  ts = await startTestServer({ port: oldPort }); // same port, new host key (fresh RSA every time)
 
   const r = await fetch(`${base()}/api/connect`, {
     method: "POST",
@@ -261,7 +261,7 @@ test("مغایرت کلید میزبان: سرور با کلید جدید → 40
   expect(body.message).toContain("کلید میزبان");
   expect(body.detail.stored.sha256).not.toBe(body.detail.presented.hash);
 
-  // forget بدون confirm → NEED_CONFIRM
+  // forget without confirm → NEED_CONFIRM
   const f1 = await fetch(`${base()}/api/known-hosts/forget`, {
     method: "POST",
     headers: { "content-type": "application/json" },
@@ -270,7 +270,7 @@ test("مغایرت کلید میزبان: سرور با کلید جدید → 40
   expect(f1.status).toBe(400);
   expect(((await f1.json()) as { error: string }).error).toBe("NEED_CONFIRM");
 
-  // forget با confirm → اتصال مجدد ممکن می‌شود (TOFU دوباره)
+  // forget with confirm → reconnect becomes possible (TOFU again)
   const f2 = await fetch(`${base()}/api/known-hosts/forget`, {
     method: "POST",
     headers: { "content-type": "application/json" },
@@ -288,8 +288,8 @@ test("مغایرت کلید میزبان: سرور با کلید جدید → 40
   });
 }, 20_000);
 
-test("رد اثرانگشت (accept:false) → declined و بسته‌شدن", async () => {
-  // ابتدا کلید را فراموش می‌کنیم تا مسیر پارک طی شود
+test("fingerprint rejection (accept:false) → declined and closed", async () => {
+  // forget the key first so the park path is exercised
   await fetch(`${base()}/api/known-hosts/forget`, {
     method: "POST",
     headers: { "content-type": "application/json" },
@@ -313,14 +313,14 @@ test("رد اثرانگشت (accept:false) → declined و بسته‌شدن", a
   expect(c2.status).toBe("declined");
   const ls = (await (await fetch(`${base()}/api/sessions`)).json()) as { sessions: { id: string }[] };
   expect(ls.sessions.find((s) => s.id === c1.sessionId)).toBeUndefined();
-  // کلید ذخیره نشده باید باشد
+  // the key must NOT be stored
   const kh = (await (await fetch(`${base()}/api/known-hosts`)).json()) as {
     knownHosts: Record<string, unknown>;
   };
   expect(kh.knownHosts[`${TEST_HOST}:${srvPort()}`]).toBeUndefined();
 });
 
-/** اتصال کامل با inline — helper محلی */
+/** Full connect with inline — local helper */
 async function connectFull(inline: Record<string, unknown>): Promise<string> {
   const r1 = await fetch(`${base()}/api/connect`, {
     method: "POST",

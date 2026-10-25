@@ -1,8 +1,8 @@
-// انواع مشترک hem-agent — قرارداد AGENT-API.md (سند مرجع)
-// همهٔ پیام‌های کاربر فارسی است؛ رشته‌های فنی (کدها/دستورات) انگلیسی می‌مانند.
+// Shared types for hem-agent — per the AGENT-API.md contract (reference document)
+// All user-facing messages are Persian (browser UI); technical strings (codes/commands) stay English.
 
 // ---------------------------------------------------------------------------
-// خطاها (§3.5 + چند کد عملیاتی مورد نیاز پیاده‌سازی؛ انحراف‌ها مستند شده)
+// Errors (§3.5 + a few operational codes the implementation needs; deviations documented)
 // ---------------------------------------------------------------------------
 export type ErrorCode =
   | "AUTH_FAILED"
@@ -28,15 +28,15 @@ export type ErrorCode =
 export interface ApiErrorBody {
   ok: false;
   error: ErrorCode;
-  message: string; // فارسی
+  message: string; // Persian (browser UI)
   detail?: unknown;
 }
 
 // ---------------------------------------------------------------------------
-// پروفایل‌ها (بدون هیچ سری) — profiles.json در ~/.hem-agent (0600)
+// Profiles (no secrets at all) — profiles.json under ~/.hem-agent (0600)
 // ---------------------------------------------------------------------------
 export type AuthMethod = "password" | "key";
-/** حالت اجرای headscale روی سرور */
+/** How headscale runs on the server */
 export type HsMode = "system-sudo" | "system" | "custom";
 
 export interface Profile {
@@ -46,15 +46,15 @@ export interface Profile {
   port: number;
   username: string;
   authMethod: AuthMethod;
-  /** مسیر فایل کلید «روی ماشین محلی» (مثلاً ~/.ssh/id_ed25519) */
+  /** Key file path on the local machine (e.g. ~/.ssh/id_ed25519) */
   keyPath?: string;
   hsMode: HsMode;
-  /** مثل: /tmp/hs-bin/headscale --config /home/z/hs-test/config.yaml */
+  /** e.g.: /tmp/hs-bin/headscale --config /home/z/hs-test/config.yaml */
   hsCustomPrefix?: string;
   healthUrl?: string;
   logPath?: string;
   configPath?: string;
-  /** نحوهٔ فراخوانی hsctl روی سرور: 'hsctl' (PATH — پیش‌فرض) یا مسیر فایل اسکریپت (مثل /opt/headscale-easy-manager/hsctl) */
+  /** How hsctl is invoked on the server: hsctl on PATH (default) or a script file path (e.g. /opt/headscale-easy-manager/hsctl) */
   hsctlPath?: string;
   createdAt: string;
   updatedAt: string;
@@ -76,17 +76,17 @@ export interface ProfileInput {
 }
 
 // ---------------------------------------------------------------------------
-// نشست‌ها و اثرانگشت کلید میزبان (TOFU دو مرحله‌ای — §3)
+// Sessions and host key fingerprints (two-step TOFU — §3)
 // ---------------------------------------------------------------------------
 export interface HostKeyFingerprint {
-  algo: string; // مثل ssh-ed25519 / ssh-rsa
-  hash: string; // مثل SHA256:BASE64…
-  base64Md5: string; // مثل AA:BB:CC:… (hex با جداکننده)
+  algo: string; // e.g. ssh-ed25519 / ssh-rsa
+  hash: string; // e.g. SHA256:BASE64…
+  base64Md5: string; // e.g. AA:BB:CC:… (hex, colon-separated)
 }
 
 export interface KnownHostEntry {
   algo: string;
-  sha256: string; // همان فرمت hash بالا
+  sha256: string; // same format as hash above
   firstSeen: string;
 }
 
@@ -119,9 +119,9 @@ export interface ConnectInline {
 export interface ConnectRequest {
   profileId?: string;
   inline?: ConnectInline;
-  /** استفاده مجدد از شناسهٔ نشست قبلی (بعد از قطع قبلی) */
+  /** Reuse the previous session id (after a prior disconnect) */
   sessionId?: string;
-  /** اگر کاربر اثرانگشت را از قبل پذیرفته (نمایش در UI) — کلید جدید TOFU بلافاصله پذیرفته می‌شود */
+  /** If the user pre-accepted the fingerprint (shown in the UI) — the new TOFU key is accepted immediately */
   fingerprintAccept?: boolean;
 }
 
@@ -179,7 +179,7 @@ export interface ExecResult {
 }
 
 // ---------------------------------------------------------------------------
-// حسابرسی (audit JSONL)
+// Audit (JSONL audit log)
 // ---------------------------------------------------------------------------
 export interface AuditEntry {
   ts: string;
@@ -191,7 +191,7 @@ export interface AuditEntry {
 }
 
 // ---------------------------------------------------------------------------
-// ProbeResult (§6) — فقط از خروجی واقعی دستورات
+// ProbeResult (§6) — from real command output only
 // ---------------------------------------------------------------------------
 export interface ProbeOs {
   id: string;
@@ -262,13 +262,13 @@ export interface ProbeResult {
   existing: ProbeExisting;
   headscaleConfigExists: boolean;
   hemInstalled: ProbeHemInstalled;
-  warnings: string[]; // فارسی
-  blockers: string[]; // فارسی
+  warnings: string[]; // Persian (browser UI)
+  blockers: string[]; // Persian (browser UI)
   probedAt: string;
 }
 
 // ---------------------------------------------------------------------------
-// اشیای headscale (نمای نرمال‌شده + نگه‌داشتن فیلدهای خام برای UI)
+// headscale objects (normalized view + raw fields kept for the UI)
 // ---------------------------------------------------------------------------
 export interface HsTimestamp {
   seconds?: number;
@@ -281,7 +281,7 @@ export interface HsUser {
   displayName?: string | null;
   email?: string | null;
   createdAt?: string | null;
-  /** آبجکت خام خروجی CLI برای فیلدهای آینده */
+  /** Raw CLI output object for future fields */
   raw?: Record<string, unknown>;
 }
 
@@ -312,7 +312,7 @@ export interface HsRouteEntry {
 export interface HsPreAuthKey {
   id: number;
   user: { id?: number; name?: string };
-  /** همیشه ماسک‌شده از CLI می‌آید (hskey-auth-…-***) */
+  /** Always comes masked from the CLI (hskey-auth-…-***) */
   key: string;
   reusable: boolean;
   ephemeral?: boolean;
@@ -323,7 +323,7 @@ export interface HsPreAuthKey {
 
 export interface HsApiKey {
   id: number;
-  /** ماسک‌شده (hskey-api-…-***) */
+  /** Masked (hskey-api-…-***) */
   prefix: string;
   expiration?: string | null;
   createdAt?: string | null;
@@ -341,7 +341,7 @@ export interface PolicyInfo {
 }
 
 export interface PreAuthKeyCreateResult {
-  key: string; // کلید کامل — فقط یک بار برمی‌گردد
+  key: string; // full key — returned only once
   expiration: string;
   reusable: boolean;
   ephemeral: boolean;
@@ -350,13 +350,13 @@ export interface PreAuthKeyCreateResult {
 }
 
 export interface ApiKeyCreateResult {
-  key: string; // کلید کامل — فقط یک بار برمی‌گردد
+  key: string; // full key — returned only once
   expiration: string;
   warning: string;
 }
 
 // ---------------------------------------------------------------------------
-// سرویس / لاگ / سلامت
+// Service / logs / health
 // ---------------------------------------------------------------------------
 export type ServiceActionName = "start" | "stop" | "restart" | "enable" | "disable";
 
@@ -409,10 +409,10 @@ export interface ConfigSetResult {
 }
 
 // ---------------------------------------------------------------------------
-// نصب (§8) — مخزن پایتون «منبع واحد» است؛ agent فقط هماهنگ‌کننده است
+// Install (§8) — the Python repo is the single source; the agent is only a coordinator
 // ---------------------------------------------------------------------------
 
-/** ورودی‌های فرم نصب — کلیدها عیناً answers.py / examples/hem-install.conf.example */
+/** Install form inputs — keys exactly as in answers.py / examples/hem-install.conf.example */
 export interface InstallSettings {
   domain?: string;
   acme_email?: string;
@@ -428,20 +428,20 @@ export interface InstallSettings {
   install_dir?: string;
 }
 
-/** شرح یک ورودی پلان نصب (برای UI) */
+/** Description of one install-plan input (for the UI) */
 export interface PlanInputField {
   key: string;
-  label: string; // فارسی
+  label: string; // Persian (browser UI)
   type: "string" | "boolean" | "number" | "enum" | "string[]" | "object[]";
   required: boolean;
   default?: unknown;
   enum?: string[];
-  hint?: string; // فارسی
-  /** کلیدهایی که agent خودش مقدار می‌دهد (non_interactive و…) */
+  hint?: string; // Persian (browser UI)
+  /** Keys the agent sets itself (non_interactive etc.) */
   agentManaged?: boolean;
 }
 
-/** یک گام تجزیه‌شده از خروجی hsctl (الگوی واقعی: «[✓] گام N/total — عنوان — جزئیات») */
+/** One step parsed from hsctl output (real pattern: [✓] Step N/total — title — detail) */
 export interface ParsedInstallStep {
   stage: number;
   total: number;
@@ -452,7 +452,7 @@ export interface ParsedInstallStep {
 }
 
 // ---------------------------------------------------------------------------
-// پشتیبان / بازیابی / ارتقا (§4)
+// Backup / restore / update (§4)
 // ---------------------------------------------------------------------------
 
 export interface BackupEntry {
@@ -468,23 +468,23 @@ export interface UpdateCheckResult {
 }
 
 // ---------------------------------------------------------------------------
-// allowlist کنسول (§9)
+// Console allowlist (§9)
 // ---------------------------------------------------------------------------
 export interface AllowlistContext {
-  /** میزبان پروفایل — curl فقط به همین میزبان/localhost مجاز است */
+  /** Profile host — curl is allowed only to this host/localhost */
   host?: string;
 }
 
 export interface AllowlistResult {
   allowed: boolean;
-  reason?: string; // فارسی
-  /** رشتهٔ دقیقی که اجرا می‌شود (argv آرایه‌ای بازساخته‌شده با quoting امن) */
+  reason?: string; // Persian (browser UI)
+  /** The exact string that will be executed (argv rebuilt as an array with safe quoting) */
   exactCommand: string;
   argv: string[];
 }
 
 // ---------------------------------------------------------------------------
-// job ها (§5) — با بافر حلقه‌ای لاگ برای اتصال دیرهنگام / REST fallback
+// Jobs (§5) — with a ring-buffered log for late subscribers / REST fallback
 // ---------------------------------------------------------------------------
 export interface JobInfo {
   id: string;
@@ -492,7 +492,7 @@ export interface JobInfo {
   sessionId: string;
   startedAt: string;
   cancelled: boolean;
-  /** running | done | error — پس از پایان هم رکورد تا مدتی نگه داشته می‌شود */
+  /** running | done | error — the record is kept for a while after completion */
   status?: "running" | "done" | "error";
   ok?: boolean;
   exitCode?: number | null;
@@ -503,7 +503,7 @@ export interface JobInfo {
 }
 
 export interface JobLogLine {
-  /** شمارهٔ ترتیبی خط — مبنای ?since= در REST fallback */
+  /** Line sequence number — the basis of ?since= in the REST fallback */
   seq: number;
   line: string;
   stream: "stdout" | "stderr";
@@ -511,9 +511,9 @@ export interface JobLogLine {
 
 export interface JobLogPage {
   logs: JobLogLine[];
-  /** برای صفحهٔ بعدی بفرستید */
+  /** Send this for the next page */
   nextSince: number;
-  /** true یعنی بخشی از ابتدای لاگ (بیش از ۵۰۰ خط) دیگر در بافر نیست */
+  /** true means part of the beginning of the log (beyond 500 lines) is no longer buffered */
   truncated: boolean;
 }
 
@@ -538,7 +538,7 @@ export interface JobDoneEvent {
   ok: boolean;
   exitCode: number | null;
   summary: string;
-  /** وضعیت نهایی نصب (verified/full_success/pending_verification/service_not_ready/partial_failure) یا وضعیت ارتقا (rolled_back/…) */
+  /** Install final state (verified/full_success/pending_verification/service_not_ready/partial_failure) or update state (rolled_back/…) */
   finalState?: string;
 }
 export interface JobErrorEvent {

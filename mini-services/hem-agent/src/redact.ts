@@ -1,5 +1,5 @@
-// ابزار پاک‌سازی (redaction) — هیچ رمز/کلید کاملی هرگز در لاگ/audit نوشته نمی‌شود.
-// الگوهای عمومی + اسرار ثبت‌شدهٔ صریح (رمز، passphrase، محتوای کلید خصوصی).
+// Redaction utilities — no password/full key is ever written to logs/audit.
+// Generic patterns + explicitly registered secrets (password, passphrase, private key content).
 
 const PRIVATE_KEY_RE =
   /-----BEGIN [A-Z0-9 ]*PRIVATE KEY-----[\s\S]*?-----END [A-Z0-9 ]*PRIVATE KEY-----/g;
@@ -7,15 +7,15 @@ const PRIVATE_KEY_RE =
 // hskey-auth-XXXXXXXXXXXXXXXXXXXXXX-YYYY…  →  hskey-auth-XXXXX-***
 const HSKEY_RE = /\bhskey-(auth|api)-([A-Za-z0-9_-]{0,5})[A-Za-z0-9_-]*-?[A-Za-z0-9_-]*\b/g;
 
-// فرم از قبل ماسک‌شده (hskey-auth-XXX-***) — برای پایداری (idempotent) بودن پاک‌سازی
+// Already-masked form (hskey-auth-XXX-***) — keeps redaction idempotent
 const HSKEY_MASKED_RE = /\bhskey-(auth|api)-[A-Za-z0-9_-]{0,5}-\*\*\*/g;
 const MASK_PLACEHOLDER = "\u0000HEM-MASKED-";
 
-// password=… / passphrase: … / token: … → مقدار ماسک می‌شود
+// password=… / passphrase: … / token: … → the value gets masked
 const SECRET_ASSIGN_RE =
   /\b(password|passphrase|secret|token|api[_-]?key)\s*([:=])\s*\S+/gi;
 
-/** آستانهٔ طول برای پذیرش یک رشته به‌عنوان «راز» (رشته‌های خیلی کوتاه ماسک نشوند) */
+/** Length threshold for accepting a string as a secret (very short strings are not masked) */
 const MIN_SECRET_LEN = 6;
 
 export function maskHsKey(fullKey: string): string {
@@ -27,7 +27,7 @@ export function maskHsKey(fullKey: string): string {
 export class Redactor {
   private secrets = new Set<string>();
 
-  /** ثبت یک راز صریح (رمز، passphrase، کلید خصوصی، کلید کامل) برای ماسک کردن در لاگ‌ها */
+  /** Register an explicit secret (password, passphrase, private key, full key) for masking in logs */
   registerSecret(value?: string | null): void {
     if (typeof value !== "string") return;
     const v = value.trim();
@@ -35,10 +35,10 @@ export class Redactor {
     this.secrets.add(v);
   }
 
-  /** پاک‌سازی یک رشتهٔ متنی */
+  /** Redact a text string */
   redactText(input: string): string {
     let out = input.replace(PRIVATE_KEY_RE, "<PRIVATE-KEY-REDACTED>");
-    // ۱) فرم‌های از قبل ماسک‌شده کنار گذاشته می‌شوند تا دوباره ماسک نشوند (خروجی تمیز و پایدار)
+    // 1) already-masked forms are set aside so they are not masked again (clean, stable output)
     const masked: string[] = [];
     out = out.replace(HSKEY_MASKED_RE, (m) => {
       masked.push(m);
@@ -53,7 +53,7 @@ export class Redactor {
     return out;
   }
 
-  /** پاک‌سازی عمیق یک مقدار (شیء/آرایه/رشته) — بدون تغییر ساختار */
+  /** Deep-redact a value (object/array/string) — structure unchanged */
   redactValue<T>(value: T): T {
     if (typeof value === "string") return this.redactText(value) as unknown as T;
     if (Array.isArray(value)) return value.map((v) => this.redactValue(v)) as unknown as T;
@@ -68,7 +68,7 @@ export class Redactor {
   }
 }
 
-/** پاک‌سازی سریع بدون ثبت راز (برای رشته‌های بی‌خطری که الگوی عمومی دارند) */
+/** Quick redaction without registering secrets (for harmless strings covered by generic patterns) */
 export function redactString(s: string): string {
   return new Redactor().redactText(s);
 }

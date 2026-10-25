@@ -1,19 +1,20 @@
-// allowlist کنسول (قرارداد §9) — بدون شل آزاد، الزام امنیتی محصول.
-//  - توکنایز شل‌مانند (کوت/دابل‌کوت)؛ «نرمال‌سازی» رخ می‌دهد و رشتهٔ نهایی از argv اعتبارسنجی‌شده ساخته می‌شود
-//  - هیچ کاراکتر متکار شل مجاز نیست: ; & | $ > < ` ( ) و بک‌اسلش
-//  - ریشه‌های مجاز: headscale, hsctl, systemctl (فقط status/is-active), journalctl -u <unit> [-n N],
-//    curl -s -m <t> <url> (میزبان: پروفایل/localhost/127.0.0.1), ufw status*, df -h, ss -tulpn
-//  - خروجی preview: رشتهٔ argv دقیقی که اجرا می‌شود
+// Console allowlist (contract §9) — no free shell; a product security requirement.
+//  - Shell-like tokenization (single/double quotes); "normalization" happens and the
+//    final string is rebuilt from the validated argv
+//  - No shell metacharacters allowed: ; & | $ > < ` ( ) and backslash
+//  - Allowed programs: headscale, hsctl, systemctl (status/is-active only), journalctl -u <unit> [-n N],
+//    curl -s -m <t> <url> (host: profile/localhost/127.0.0.1), ufw status*, df -h, ss -tulpn
+//  - Preview output: the exact argv string that will be executed
 
 import type { AllowlistContext, AllowlistResult } from "./types";
 import { shellQuote } from "./ssh";
 
-/** کاراکترهای ممنوع در ورودی خام */
+/** Characters forbidden in the raw input */
 const FORBIDDEN_CHARS = /[;&|$><`()\\\n\r]/;
 
 /**
- * توکنایزر شل‌مانند: کوت‌شن '…' و "…" را پشتیبانی می‌کند؛ ورودی از قبل فاقد متکارهاست.
- * خروجی null یعنی کوت باز مانده (نامعتبر).
+ * Shell-like tokenizer: supports '…' and "…" quoting; the input is already metacharacter-free.
+ * A null return means an unterminated quote (invalid).
  */
 export function tokenize(input: string): string[] | null {
   const tokens: string[] = [];
@@ -80,7 +81,7 @@ function deny(reason: string, argv: string[]): AllowlistResult {
   return { allowed: false, reason, exactCommand: "", argv };
 }
 
-/** بررسی یک دستور کنسول در برابر allowlist و ساخت رشتهٔ دقیق اجرا */
+/** Check a console command against the allowlist and build the exact execution string */
 export function checkCommand(rawCmd: string, ctx: AllowlistContext = {}): AllowlistResult {
   const raw = typeof rawCmd === "string" ? rawCmd.trim() : "";
   if (raw.length === 0) {
@@ -110,7 +111,7 @@ export function checkCommand(rawCmd: string, ctx: AllowlistContext = {}): Allowl
 
   switch (prog) {
     case "headscale":
-      // ریشهٔ headscale مجاز است؛ آرگومان‌ها به CLI رسمی می‌روند (عملیات مخرب در لایهٔ API نیازمند confirm هستند)
+      // headscale root is allowed; args go to the official CLI (destructive operations require confirm at the API layer)
       if (rest.length === 0) return deny("زیرفرمان headscale الزامی است.", argv);
       return ok();
 
@@ -142,7 +143,7 @@ export function checkCommand(rawCmd: string, ctx: AllowlistContext = {}): Allowl
     }
 
     case "curl": {
-      // curl -s -m <t> <url> — طرح http/https و میزبان مجاز
+      // curl -s -m <t> <url> — http/https scheme and allowed host only
       const flags: string[] = [];
       let url = "";
       for (let i = 0; i < rest.length; i++) {
@@ -201,12 +202,12 @@ export function checkCommand(rawCmd: string, ctx: AllowlistContext = {}): Allowl
   }
 }
 
-/** پیش‌نمایش — برای POST /api/s/:sid/console/preview */
+/** Preview — for POST /api/s/:sid/console/preview */
 export function previewCommand(rawCmd: string, ctx: AllowlistContext = {}): AllowlistResult {
   return checkCommand(rawCmd, ctx);
 }
 
-/** اعتبارسنجی مسیر/CIDR برای آرگومان‌های مسیر (استفادهٔ داخلی آداپتورها) */
+/** Validate a route/CIDR for route arguments (internal use by adapters) */
 export function isValidRoute(r: string): boolean {
   return ROUTE_RE.test(r) && r.length <= 45;
 }

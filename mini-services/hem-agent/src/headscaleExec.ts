@@ -1,8 +1,8 @@
-// ساخت فراخوانی headscale بر اساس حالت پروفایل (قرارداد §7):
-//  - system-sudo: `sudo -n headscale …` یا `sudo -S -p '' headscale …` (رمز از stdin)
+// Build headscale invocations according to profile mode (contract §7):
+//  - system-sudo: `sudo -n headscale …` or `sudo -S -p '' headscale …` (password via stdin)
 //  - system:      `headscale …`
-//  - custom:      `<hsCustomPrefix> …` (مثل: /tmp/hs-bin/headscale --config /home/z/hs-test/config.yaml)
-// همهٔ فلگ‌ها با باینری واقعی v0.29.5 راستی‌آزمایی شده‌اند (سند AGENT-API §2).
+//  - custom:      `<hsCustomPrefix> …` (e.g.: /tmp/hs-bin/headscale --config /home/z/hs-test/config.yaml)
+// All flags verified against the real v0.29.5 binary (AGENT-API doc §2).
 
 import { HemError } from "./errors";
 import { shellQuote, type SshSession } from "./ssh";
@@ -15,22 +15,22 @@ export interface HsRunContext {
   hsCustomPrefix?: string;
   sudoMode?: SudoMode;
   sudoPassword?: string;
-  /** مسیر پیکربندی سرور (برای configGet/configSet) */
+  /** Server config path (for configGet/configSet) */
   configPath?: string;
-  /** URL سلامت (پیش‌فرض http://127.0.0.1:8080/health) */
+  /** Health URL (default http://127.0.0.1:8080/health) */
   healthUrl?: string;
-  /** مسیر فایل لاگ برای fallback وقتی journalctl نیست */
+  /** Log file path used as fallback when journalctl is unavailable */
   logPath?: string;
-  /** refresh sudo در صورت نیاز */
+  /** Refresh sudo mode on demand */
   refreshSudo?: () => Promise<SudoMode>;
 }
 
 export interface HsRunOptions extends ExecOptions {
-  /** جایگزینی --config (مثلاً فایل موقت برای configtest) */
+  /** Replace the --config flag (e.g. a temp file for configtest) */
   configOverride?: string;
 }
 
-/** جایگذاری/درج فلگ --config در آرگومان‌های برنامه */
+/** Replace/insert the --config flag among program args */
 function applyConfigOverride(argv: string[], override: string): string[] {
   const out = [...argv];
   const i = out.findIndex((t) => t === "--config" || t === "-c");
@@ -39,12 +39,12 @@ function applyConfigOverride(argv: string[], override: string): string[] {
     else out.splice(i, 1, "--config", override);
     return out;
   }
-  // درج بعد از نام برنامه (قبل از زیرفرمان) — فلگ سراسری cobra
+  // Insert after the program name (before the subcommand) — a global cobra flag
   out.splice(1, 0, "--config", override);
   return out;
 }
 
-/** ساخت argv کامل فرمان headscale (بدون sudo) */
+/** Build the full headscale command argv (without sudo) */
 export function buildHsArgv(ctx: HsRunContext, args: string[], opts: { configOverride?: string } = {}): string[] {
   let base: string[];
   if (ctx.hsMode === "custom") {
@@ -59,7 +59,7 @@ export function buildHsArgv(ctx: HsRunContext, args: string[], opts: { configOve
   return argv;
 }
 
-/** اجرای یک فرمان headscale با توجه به حالت پروفایل (sudo فقط از stdin) */
+/** Run one headscale command according to profile mode (sudo password only via stdin) */
 export async function runHs(ctx: HsRunContext, args: string[], opts: HsRunOptions = {}): Promise<ExecResult> {
   const argv = buildHsArgv(ctx, args, { configOverride: opts.configOverride });
   const cmd = argv.map(shellQuote).join(" ");

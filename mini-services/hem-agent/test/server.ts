@@ -1,10 +1,10 @@
-// سرور SSH آزمایشی (REAL ssh2) روی 127.0.0.1:2222 — فقط برای تست‌ها و دموی sandbox.
-//  - hostkey: RSA PKCS#1 PEM تولیدشده در زمان اجرا (الگوی node:crypto؛ NOT openssh string)
-//  - احراز هویت: رمز «hemtest-pass» یا کلید عمومی ed25519 فیکسچر
-//  - exec: اجرای LOCALLY از طریق /bin/bash -c با shim در PATH
+// Test SSH server (REAL ssh2) on 127.0.0.1:2222 — for tests and the sandbox demo only.
+//  - hostkey: RSA PKCS#1 PEM generated at runtime (node:crypto style; NOT an openssh string)
+//  - auth: password "hemtest-pass" or the fixture ed25519 public key
+//  - exec: runs LOCALLY via /bin/bash -c with the shim on PATH
 //    (test/shim/headscale → /tmp/hs-bin/headscale --config /home/z/hs-test/config.yaml)
 //
-// حالت مستقل: `bun run test/server.ts` — سرور بالا می‌ماند (دموی sandbox).
+// Standalone mode: `bun run test/server.ts` — the server stays up (sandbox demo).
 
 import { Server as SshServer, utils as sshUtils } from "ssh2";
 import { generateKeyPairSync } from "node:crypto";
@@ -18,7 +18,7 @@ export const TEST_PASSWORD = "hemtest-pass";
 export const FIXTURES_DIR = join(import.meta.dir, "fixtures");
 export const SHIM_DIR = join(import.meta.dir, "shim");
 
-/** تولید کلید میزبان RSA — PKCS#1 PEM (الگوی تأییدشدهٔ ssh2 زیر Bun) */
+/** Generate the RSA host key — PKCS#1 PEM (the pattern proven to work with ssh2 under Bun) */
 export function generateHostKeyPem(): string {
   const { privateKey } = generateKeyPairSync("rsa", {
     modulusLength: 2048,
@@ -28,7 +28,7 @@ export function generateHostKeyPem(): string {
   return String(privateKey);
 }
 
-/** ساخت/به‌روزرسانی shim — headscale واقعی v0.29.5 با config سرور آزمایشی */
+/** Create/update the shim — the real headscale v0.29.5 with the test-server config */
 export function ensureShim(): string {
   mkdirSync(SHIM_DIR, { recursive: true });
   const shim = join(SHIM_DIR, "headscale");
@@ -59,8 +59,8 @@ export async function startTestServer(
   const port = opts.port ?? TEST_PORT;
   const hostKey = opts.hostKeyPem ?? generateHostKeyPem();
   const shimDir = ensureShim();
-  // noShim: سرورِ «تمیز» — مثل یک VPS تازه که headscale روی PATH آن نیست
-  // (برای تست جریان نصب؛ shim بودن headscale مسیر نصب‌کننده را به «مدیریت نصب موجود» می‌برد)
+  // noShim: a "clean" server — like a fresh VPS where headscale is not on PATH
+  // (for testing the install flow; having headscale as a shim routes the installer to "manage existing install")
   const childPath = opts.noShim ? (process.env.PATH ?? "/usr/bin:/bin") : `${shimDir}:${process.env.PATH ?? "/usr/bin:/bin"}`;
   const authorizedKeys = loadAuthorizedPubKeys();
 
@@ -102,7 +102,7 @@ export async function startTestServer(
           ctx.reject(["password", "publickey"]);
         });
         client.on("error", () => {
-          /* قطع ناگهانی کلاینت نباید سرور تست را بکشد */
+          /* an abrupt client disconnect must not kill the test server */
         });
         client.on("session", (accept) => {
           const session = accept();
@@ -116,13 +116,13 @@ export async function startTestServer(
               },
             });
             let channelClosed = false;
-            // stdin واقعی: دیتای نوشته‌شدهٔ کلاینت به فرزند می‌رود و EOF هم منتقل می‌شود
-            // (بدون این، `sudo -S` که منتظر stdin است تا ابد می‌ماند)
+            // real stdin: client-written data goes to the child and EOF is forwarded too
+            // (without this, `sudo -S` waiting on stdin would hang forever)
             stream.on("data", (d: Buffer) => {
               try {
                 child.stdin.write(d);
               } catch {
-                /* فرزند ممکن است تمام شده باشد */
+                /* the child may already be gone */
               }
             });
             stream.on("end", () => {
@@ -142,7 +142,7 @@ export async function startTestServer(
               try {
                 child.kill("SIGKILL");
               } catch {
-                /* فرزند ممکن است تمام شده باشد */
+                /* the child may already be gone */
               }
             });
             child.stdout.on("data", (d) => {
@@ -151,14 +151,14 @@ export async function startTestServer(
             child.stderr.on("data", (d) => {
               if (!channelClosed) stream.stderr.write(d);
             });
-            // «close» فرزند = خروج + تخلیهٔ کامل stdio — ترتیب خروجی تضمین می‌شود
+            // child "close" = exit + fully flushed stdio — output ordering is guaranteed
             child.on("close", (code) => {
               if (!channelClosed) {
                 try {
                   stream.exit(code ?? 0);
                   stream.close();
                 } catch {
-                  /* کانال ممکن است بسته باشد */
+                  /* the channel may already be closed */
                 }
               }
             });
@@ -185,7 +185,7 @@ export async function startTestServer(
         port: actualPort,
         close: () =>
           new Promise<void>((res) => {
-            // بستن همهٔ کلاینت‌ها (پارک‌شده‌ها ممکن است مانع close شوند)
+            // close every client (parked ones may block server close)
             for (const c of [...clients]) {
               try {
                 c.end();
@@ -218,11 +218,11 @@ export async function startTestServer(
 }
 
 // ---------------------------------------------------------------------------
-// حالت مستقل: `bun run test/server.ts`
+// Standalone mode: `bun run test/server.ts`
 // ---------------------------------------------------------------------------
-/** مسیر کلید میزبان ماندگار دموی sandbox — تولید یک‌بار، استفادهٔ مکرر.
- *  بدون این، هر ری‌استارت سرورِ دمو کلید تازه‌ای می‌ساخت و پروفایل ذخیره‌شدهٔ
- *  کاربر با HOSTKEY_CHANGED رد می‌شد (Task 5-d). تست‌ها کلید لحظه‌ای می‌سازند. */
+/** Persistent host-key path for the sandbox demo — generated once, reused.
+ *  Without this, every demo-server restart would mint a fresh key and the user's
+ *  saved profile would be rejected with HOSTKEY_CHANGED (Task 5-d). Tests use ephemeral keys. */
 export const DEMO_HOSTKEY_PATH = join(FIXTURES_DIR, "hostkey.pem");
 
 function loadOrCreateDemoHostKey(): string {
@@ -230,7 +230,7 @@ function loadOrCreateDemoHostKey(): string {
     const pem = readFileSync(DEMO_HOSTKEY_PATH, "utf8");
     if (pem.includes("PRIVATE KEY")) return pem;
   } catch {
-    /* هنوز ساخته نشده — تولید می‌کنیم */
+    /* not created yet — generate it */
   }
   const pem = generateHostKeyPem();
   mkdirSync(FIXTURES_DIR, { recursive: true });
@@ -240,10 +240,10 @@ function loadOrCreateDemoHostKey(): string {
 
 if (import.meta.main) {
   const pem = loadOrCreateDemoHostKey();
-  // حالت پیش‌فرض دمو: «VPS تازه» — headscale روی PATH نیست تا جریان نصب
-  // (نصب تازهٔ ۱۷ گامی + dry-run با کد خروج ۰) قابل نمایش باشد؛ مدیریت
-  // headscale از طریق hsCustomPrefix پروفایل (حالت custom) کار می‌کند.
-  // برای دموی «سرور مدیریت‌شده» (headscale روی PATH): DEMO_WITH_SHIM=1
+  // Default demo flavor: "fresh VPS" — headscale not on PATH so the install flow
+  // (17-step fresh install + dry-run with exit code 0) can be demonstrated; managing
+  // headscale works via the profile's hsCustomPrefix (custom mode).
+  // For a "managed server" demo (headscale on PATH): DEMO_WITH_SHIM=1
   const withShim = process.env.DEMO_WITH_SHIM === "1";
   const handle = await startTestServer({ port: TEST_PORT, hostKeyPem: pem, noShim: !withShim });
   console.log(`[test-server] SSH test server on ${handle.host}:${handle.port}`);
@@ -255,7 +255,7 @@ if (import.meta.main) {
       : `[test-server] PATH: clean (fresh-VPS flavor — install flow demo; set DEMO_WITH_SHIM=1 for shim)`,
   );
   const keepAlive = setInterval(() => {
-    /* بالا نگه‌داشتن پروسه */
+    /* keep the process alive */
   }, 60_000);
   process.on("SIGINT", () => {
     clearInterval(keepAlive);
