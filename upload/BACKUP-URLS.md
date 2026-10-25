@@ -55,3 +55,23 @@
 - gofile.io در این لحظه از سندباکس پاسخ نمی‌داد (store1 آویزان/غیرJSON، store2 404) — در جلسات بعدی دوباره امتحان می‌شود.
 - uguu.se فایل zip را با خطای 415 («Filetype not allowed») رد می‌کند (حتی با پسوند مجاز) — محدودیت میزبان است، نه بسته.
 - بازیابی مطمئن: GitHub Release (بادوام) → در نبود آن tmpfiles (۶۰د) → در جلسهٔ بعدی gofile.
+
+---
+
+## v0.3.2-beta.2 (۲۰۲۶-۱۰-۲۵) — «رفع دو باگ اجرای ویندوزی: Parser نصب‌کننده + بسته‌شدن سریع EXE» (Pre-release از develop)
+
+### پشتیبان اصلی (بادوام): GitHub Release
+- https://github.com/P3D4AM/HeadScale-Manager/releases/tag/v0.3.2-beta.2
+- کامیت دقیق: f36ad071efa5895b9d2e942dc1d47afceeb187be (develop)
+- دارایی‌ها: tar.gz + zip ویندوزی + هر دو فایل .sha256 (چهار آپلود موفق + راستی‌آزمایی بازدانلود بایت‌به‌بایت)
+
+### SHA-256
+```
+e00a0da9926fcc972d98314437a9b6ce2098304f3655f823830bdce750f2675f  headscale-easy-manager-v0.3.2-beta.2.tar.gz
+d8c33cdaa9512e49c144150d30159e320a47af0b53330b5c5dd9498f30a6c769  HeadscaleEasyManager-v0.3.2-beta.2-win64.zip
+```
+(هر دو دارایی پس از آپلود دوباره دانلود و sha256 آنها با مقادیر بالا تطبیق داده شد؛ install.ps1 داخل zip بازرسی شد: BOM + فقط CRLF.)
+
+### یادداشت
+- این نسخه رفع دو باگ گزارش‌شدهٔ کاربر است: خطای نحوی install.ps1 (ریشه: UTF-8 بدون BOM + LF در خوانش ANSI → کوتیشن‌های یونی‌کد U+2018..U+201E به‌عنوان جداکنندهٔ رشتهٔ Parser) و بسته‌شدن سریع EXE (ریشه: دابل‌کلیک بدون متغیر → fail-closed → exit≠0 فوری؛ اصلاح: قاعدهٔ دسکتاپ برای بستهٔ ویندوزی + لاگ فایل تشخیصی).
+- جزئیات کامل در CHANGELOG (بخش 0.3.2-beta.2) و release notes.
