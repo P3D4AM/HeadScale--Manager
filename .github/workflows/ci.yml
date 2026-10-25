@@ -1,27 +1,29 @@
 # ============================================================================
-# ci.yml — CI پروژهٔ Headscale Easy Manager (HEM)
+# ci.yml — Headscale Easy Manager (HEM) project CI
 # ----------------------------------------------------------------------------
-# دو شغل:
-#   windows: کامپایل EXE و «اجرای واقعی خودِ EXE» روی windows-latest —
-#            چک‌های زندهٔ مدل احراز هویت v0.3.2 §2 (fail-closed) + شبیه‌سازی
-#            دابل‌کلیک (رگرسیون بسته‌شدن سریع EXE) + رد شدن ترکیب‌های متناقض +
-#            «Windows PowerShell 5.1 واقعی»: parse قالب‌ها با Parser خودش و
-#            اجرای واقعی install.ps1/uninstall.ps1 روی رانر (LOCALAPPDATA +
-#            میانبرها + رشته‌های فارسی سالم تا AST).
-#   linux:   clone تمیز — lint/typecheck (ریشه و agent)/تولید فصل‌ها/next build/
-#            pytest کامل/تست‌های قابل‌حمل agent/release.sh/build-windows.sh
-#            (راستی‌آزمایی زندهٔ باینری لینوکسی هم‌سورس + اجرای خالی fail-closed
-#            + لاگ فایل + اتصال و exec واقعی SSH روی سرور آزمایشی 2222).
+# Two jobs:
+#   windows: compile the EXE and "really run the EXE itself" on windows-latest —
+#            live checks of the v0.3.2 §2 auth model (fail-closed) + the
+#            double-click simulation (EXE flash-close regression) + contradictory
+#            combos refusing to start + "real Windows PowerShell 5.1": parse the
+#            templates with its own Parser and really run install.ps1/uninstall.ps1
+#            on the runner (LOCALAPPDATA + shortcuts + intact English strings
+#            through the AST).
+#   linux:   clean clone — lint/typecheck (root and agent)/chapter generation/
+#            next build/full pytest/portable agent tests/release.sh/
+#            build-windows.sh (live verification of the same-source Linux binary:
+#            bare-run fail-closed + file log + real SSH TOFU connection and exec
+#            on the test server at port 2222).
 #
-# نکتهٔ دسترسی: push این فایل نیازمند مجوز «Workflows: Read and write» روی
-# توکن است — PAT بدون آن با خطای «refusing to allow a Personal Access Token
-# to create or update workflow … without workflow scope» رد می‌شود.
-# راه‌فعال‌سازی: (۱) افزودن مجوز به توکن و push شاخهٔ develop-ci، یا (۲) افزودن
-# همین فایل از وب‌گیتهاب (Add file → Create new file → .github/workflows/ci.yml).
+# Access note: pushing this file requires the "Workflows: Read and write"
+# permission on the token — a PAT without it is rejected with
+# "refusing to allow a Personal Access Token to create or update workflow
+# … without workflow scope".
 #
-# نکتهٔ encoding (درس v0.3.2-beta.2): استپ‌های powershell عمداً «فقط ASCII»
-# هستند؛ نشانگرهای فارسی با codepoint ساخته می‌شوند تا از رفتار
-# Windows PowerShell 5.1 با فایل‌های بدون BOM مصون بمانند.
+# Encoding note (v0.3.2-beta.2 lesson): the powershell steps are deliberately
+# pure ASCII. The installer templates themselves are English-only/ASCII since
+# v0.3.2-beta.3 (user directive: terminal = English-only), so the markers
+# checked below are plain ASCII strings.
 # ============================================================================
 
 name: CI
@@ -37,7 +39,7 @@ permissions:
 
 jobs:
   # ---------------------------------------------------------------------------
-  # شغل ویندوزی — اجرای واقعی خودِ EXE روی windows-latest
+  # Windows job — really run the EXE itself on windows-latest
   # ---------------------------------------------------------------------------
   windows:
     name: "Windows - real EXE + PowerShell 5.1"
@@ -82,8 +84,9 @@ jobs:
         working-directory: mini-services/hem-agent
         run: bun run typecheck
 
-      # استیج «چیدمان packaged»: hem-manager.exe + ui/ + installer/ کنار هم —
-      # همان چیزی که build-windows.sh در بستهٔ رسمی می‌سازد (v0.3.1 §1).
+      # "Packaged layout" stage: hem-manager.exe + ui/ + installer/ next to each
+      # other — exactly what build-windows.sh creates in the official package
+      # (v0.3.1 §1).
       - name: Stage package + compile hem-manager.exe
         shell: bash
         run: |
@@ -100,9 +103,9 @@ jobs:
           echo "SHA-256 (hem-manager.exe):"
           sha256sum stage/hem-manager.exe
 
-      # اجرای واقعی EXE با توکن صریح — همان زنجیرهٔ چک‌های زندهٔ
-      # build-windows.sh (که روی باینری لینوکسی اجرا می‌شود) این‌جا روی خودِ
-      # EXE ویندوزی تکرار می‌شود.
+      # Really run the EXE with an explicit token — the same live-check chain
+      # as build-windows.sh (which runs against the same-source Linux binary),
+      # repeated here against the actual Windows EXE.
       - name: Real EXE run - live checks (auth model v0.3.2)
         shell: bash
         run: |
@@ -123,7 +126,7 @@ jobs:
           chk() { if [ "$2" -eq 0 ]; then echo "  [OK]   $1"; else echo "  [FAIL] $1"; errors=$((errors+1)); fi; }
           T="$HEM_AGENT_TOKEN"
 
-          # 1) health عمومیِ حداقلی (بدون توکن) — فقط ok/service/version
+          # 1) minimal public health (no token) — only ok/service/version
           pub="$(curl -s "http://127.0.0.1:$PORT/api/health")"
           r=0
           echo "$pub" | grep -q '"service":"hem-agent"' || r=1
@@ -131,22 +134,22 @@ jobs:
           echo "$pub" | grep -q '"sessions"' && r=1
           chk "GET /api/health without token -> 200 minimal (ok/service/version only)" $r
 
-          # 2) health کامل با هدر توکن
+          # 2) full health with the token header
           code="$(curl -s -o /dev/null -w '%{http_code}' -H "X-HEM-Token: $T" "http://127.0.0.1:$PORT/api/health")"
           r=0; [ "$code" = 200 ] || r=1
           chk "X-HEM-Token header -> 200 (full health)" $r
 
-          # 3) مسیر حساس بدون توکن -> 401
+          # 3) a sensitive route without a token -> 401
           code="$(curl -s -o /dev/null -w '%{http_code}' "http://127.0.0.1:$PORT/api/profiles")"
           r=0; [ "$code" = 401 ] || r=1
           chk "sensitive /api/profiles without token -> 401" $r
 
-          # 4) کوکی جلسه‌ای کافی است
+          # 4) the session cookie is enough
           code="$(curl -s -o /dev/null -w '%{http_code}' -H "Cookie: hem_token=$T" "http://127.0.0.1:$PORT/api/profiles")"
           r=0; [ "$code" = 200 ] || r=1
           chk "hem_token cookie (no header) -> 200" $r
 
-          # 5) تبادل یک‌بارمصرف ?token= -> 303 + Set-Cookie جلسه‌ای (بدون Max-Age)
+          # 5) one-time ?token= exchange -> 303 + session Set-Cookie (no Max-Age)
           hdr="$(mktemp)"; body="$(mktemp)"
           code="$(curl -s -L -o "$body" -D "$hdr" "http://127.0.0.1:$PORT/?token=$T" -w '%{http_code}')"
           r=0
@@ -157,13 +160,13 @@ jobs:
           [ "$code" = 200 ] || r=1
           chk "GET /?token= -> 303 + session Set-Cookie + Persian index.html" $r
 
-          # 6) replay لینک قدیمی -> بدون Set-Cookie (یک‌بارمصرف)
+          # 6) replaying the old link -> no Set-Cookie (one-time)
           rh="$(mktemp)"
           curl -s -o /dev/null -D "$rh" "http://127.0.0.1:$PORT/?token=$T"
           r=0; grep -qi '^set-cookie: *hem_token=' "$rh" && r=1
           chk "old link replay -> no Set-Cookie (one-time exchange)" $r
 
-          # 7) GET / = text/html — هرگز JSON مبهم سلامت (رگرسیون باگ UI ویندوزی)
+          # 7) GET / = text/html — never the ambiguous health JSON (Windows UI bug regression)
           ct="$(curl -s -o /dev/null -w '%{content_type}' -H "Cookie: hem_token=$T" "http://127.0.0.1:$PORT/")"
           r=0; case "$ct" in text/html*) ;; *) r=1;; esac
           chk "GET / -> Content-Type: text/html" $r
@@ -171,7 +174,7 @@ jobs:
           r=0; echo "$rb" | grep -q '"service":"hem-agent"' && r=1
           chk "GET / never returns health JSON" $r
 
-          # 8) fallback SPA + no-store
+          # 8) SPA fallback + no-store
           sp="$(mktemp)"; sph="$(mktemp)"
           curl -s -o "$sp" -D "$sph" "http://127.0.0.1:$PORT/route/nashnakhte/xyz"
           r=0; grep -q 'lang="fa"' "$sp" || r=1
@@ -179,22 +182,22 @@ jobs:
           r=0; grep -qi '^cache-control: *no-store' "$sph" || r=1
           chk "index.html no-store" $r
 
-          # 9) XTransformPort بی‌ضرر است
+          # 9) XTransformPort is harmless
           code="$(curl -s -o /dev/null -w '%{http_code}' -H "X-HEM-Token: $T" "http://127.0.0.1:$PORT/api/health?XTransformPort=$PORT")"
           r=0; [ "$code" = 200 ] || r=1
           chk "XTransformPort ignored -> 200" $r
 
-          # 10) نسخهٔ گزارش‌شدهٔ agent = نسخهٔ package.json عامل
+          # 10) reported agent version = the agent's package.json version
           VERSION="$(grep -m1 '"version"' mini-services/hem-agent/package.json | sed -E 's/.*"version": *"([^"]+)".*/\1/')"
           ver="$(curl -s -H "X-HEM-Token: $T" "http://127.0.0.1:$PORT/api/health")"
           r=0; echo "$ver" | grep -q "\"$VERSION\"" || r=1
           chk "reported agent version = $VERSION" $r
 
-          # 11) installer: ok (packaged) — installer/ کنار EXE پیدا شده است
+          # 11) installer: ok (packaged) — installer/ found next to the EXE
           r=0; grep -q 'installer: ok (packaged)' exerun.log || r=1
           chk "installer: ok (packaged) in startup log" $r
 
-          # 12) توکن هرگز در لاگ فایل تشخیصی نیست (Redactor)
+          # 12) the token is never in the diagnostic file log (Redactor)
           r=0
           if [ -f "$HEM_AGENT_HOME/logs/hem-agent.log" ]; then
             grep -q "$T" "$HEM_AGENT_HOME/logs/hem-agent.log" && r=1
@@ -212,17 +215,20 @@ jobs:
           fi
           echo "All live EXE checks passed."
 
-      # شبیه‌سازی دابل‌کلیک: EXE «بدون هیچ متغیر محیطی» — قاعدهٔ بستهٔ
-      # ویندوزی (v0.3.2-beta.2): حالت دسکتاپ با توکن تصادفی همان اجرا؛
-      # برنامه باید «بالا بماند» (رگرسیون بسته‌شدن سریع پنجره) و لاگ فایل
-      # تشخیصی بدون توکن ساخته شود.
+      # Double-click simulation: the EXE "without any environment variables" —
+      # the Windows-package rule (v0.3.2-beta.2): desktop mode with a random
+      # token for that run; the app must "stay up" (flash-close regression) and
+      # the diagnostic file log must exist without the token. The bootstrap
+      # browser auto-open stays enabled here on purpose — that is the real
+      # double-click behavior (its opening the link consumes the one-time token,
+      # which is the designed delivery flow and irrelevant to these checks).
       - name: Double-click simulation - bare EXE stays up (desktop mode)
         shell: bash
         run: |
           set -euo pipefail
           errors=0
           env -u HEM_AGENT_TOKEN -u HEM_AGENT_AUTH -u HEM_AGENT_PORT -u HEM_AGENT_HOST \
-              -u HEM_DESKTOP -u HEM_AGENT_HOME -u HEM_PROJECT_ROOT \
+              -u HEM_DESKTOP -u HEM_AGENT_HOME -u HEM_PROJECT_ROOT -u HEM_DESKTOP_NO_BROWSER \
             ./stage/hem-manager.exe > bare.log 2>&1 &
           BIN=$!
           cleanup() { kill "$BIN" 2>/dev/null || true; wait "$BIN" 2>/dev/null || true; }
@@ -236,7 +242,7 @@ jobs:
             errors=$((errors+1))
           fi
 
-          # health عمومی روی پورت پیش‌فرض دسکتاپ
+          # public health on the desktop default port
           code="$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:3005/api/health || true)"
           r=0; [ "$code" = 200 ] || r=1
           if [ "$r" -eq 0 ]; then
@@ -246,7 +252,7 @@ jobs:
             errors=$((errors+1))
           fi
 
-          # توکن دسکتاپ در stdout (لینک بوت‌استرپ) هست، در لاگ فایل نیست
+          # the desktop token is on stdout (bootstrap link) and not in the file log
           DTOK="$(grep -oE 'token=[0-9a-f]+' bare.log | head -1 | cut -d= -f2 || true)"
           r=0; [ -n "$DTOK" ] || r=1
           if [ "$r" -eq 0 ]; then
@@ -280,14 +286,15 @@ jobs:
             exit 1
           fi
 
-      # مدل fail-closed: ترکیب‌های متناقض/نامعتبر «شروع نمی‌شوند» — هرگز
-      # سرویسِ باز. (هم‌ارز بیلد لینوکسی، این‌جا روی خودِ EXE.)
+      # Fail-closed model: contradictory/invalid combos "refuse to start" —
+      # never an open service. (Equivalent of the Linux build checks, here
+      # against the EXE itself.)
       - name: Fail-closed - contradictory combos refuse to start
         shell: bash
         run: |
           set -euo pipefail
           errors=0
-          # 1) open + token -> ترکیب مبهم
+          # 1) open + token -> ambiguous combo
           set +e
           HEM_AGENT_AUTH=open HEM_AGENT_TOKEN=x HEM_AGENT_HOME="$PWD/fc1" \
             timeout 20 ./stage/hem-manager.exe > fc1.log 2>&1
@@ -296,7 +303,7 @@ jobs:
           r=0; { [ "$RC" -ne 0 ] && [ "$RC" -ne 124 ]; } || r=1
           grep -q "AUTH_OPEN_WITH_TOKEN" "fc1.log" || r=1
           if [ "$r" -eq 0 ]; then echo "  [OK]   open+token -> refuses (AUTH_OPEN_WITH_TOKEN)"; else echo "  [FAIL] open+token"; errors=$((errors+1)); fi
-          # 2) open روی آدرس شبکه‌ای -> فقط loopback
+          # 2) open on a network address -> loopback only
           set +e
           HEM_AGENT_AUTH=open HEM_AGENT_HOST=0.0.0.0 HEM_AGENT_HOME="$PWD/fc2" \
             timeout 20 ./stage/hem-manager.exe > fc2.log 2>&1
@@ -305,7 +312,7 @@ jobs:
           r=0; { [ "$RC" -ne 0 ] && [ "$RC" -ne 124 ]; } || r=1
           grep -q "loopback" "fc2.log" || r=1
           if [ "$r" -eq 0 ]; then echo "  [OK]   open+0.0.0.0 -> refuses (loopback only)"; else echo "  [FAIL] open+0.0.0.0"; errors=$((errors+1)); fi
-          # 3) مقدار نامعتبر HEM_AGENT_AUTH
+          # 3) an invalid HEM_AGENT_AUTH value
           set +e
           HEM_AGENT_AUTH=bogus HEM_AGENT_HOME="$PWD/fc3" \
             timeout 20 ./stage/hem-manager.exe > fc3.log 2>&1
@@ -314,7 +321,7 @@ jobs:
           r=0; { [ "$RC" -ne 0 ] && [ "$RC" -ne 124 ]; } || r=1
           grep -q "AUTH_INVALID_POLICY" "fc3.log" || r=1
           if [ "$r" -eq 0 ]; then echo "  [OK]   bogus auth -> refuses (AUTH_INVALID_POLICY)"; else echo "  [FAIL] bogus auth"; errors=$((errors+1)); fi
-          # 4) auth=token بدون توکن
+          # 4) auth=token without a token
           set +e
           HEM_AGENT_AUTH=token HEM_AGENT_HOME="$PWD/fc4" \
             timeout 20 ./stage/hem-manager.exe > fc4.log 2>&1
@@ -322,23 +329,29 @@ jobs:
           set -e
           r=0; { [ "$RC" -ne 0 ] && [ "$RC" -ne 124 ]; } || r=1
           grep -q "AUTH_TOKEN_MISSING" "fc4.log" || r=1
-          if [ "$r" -eq 0 ]; then echo "  [OK]   auth=token w/o token -> refuses (AUTH_TOKEN_MISSING)"; else echo "  [FAIL] auth=token w/o token"; errors=$((errors+1)); fi
+          if [ "$r" -eq 0 ]; then echo "  [OK]   auth=token w/o token -> refuses (AUTH_TOKEN_MISSING)"; else echo "  [FAIL] auth=token"; errors=$((errors+1)); fi
           if [ "$errors" -ne 0 ]; then exit 1; fi
 
-      # «Windows PowerShell 5.1 واقعی» — این استپ با shell: powershell اجرا
-      # می‌شود (روی windows-latest همان Windows PowerShell 5.1 است، نه pwsh 7).
-      # کد عمداً فقط ASCII است؛ نشانگرهای فارسی با codepoint ساخته می‌شوند
-      # (درس v0.3.2-beta.2: PS 5.1 فایل بدون BOM را ANSI می‌خواند).
+      # "Real Windows PowerShell 5.1" — this step runs with shell: powershell
+      # (on windows-latest that IS Windows PowerShell 5.1, not pwsh 7).
+      # The installer templates are English-only/pure ASCII (user directive
+      # v0.3.2-beta.3), so the markers below are plain ASCII strings — immune
+      # to the PS 5.1 reads-file-without-BOM-as-ANSI trap by construction.
+      # The scripts are invoked through a child "powershell.exe -File" so their
+      # Write-Host output is captured through the process stdout — exactly the
+      # way a user runs them (a direct "& script | Out-String" pipe would miss
+      # the Information stream in PS 5.1).
       - name: Windows PowerShell 5.1 - parse templates + real install/uninstall
         shell: powershell
         run: |
           $ErrorActionPreference = 'Stop'
-          # Persian markers built from codepoints (ASCII-safe script):
-          #   m1 = "hedaskayl" (Persian)  m2 = "install complete" (install OK)
-          #   m3 = "program removed" (uninstall OK)
-          $m1 = -join [char[]](0x0647,0x062F,0x0627,0x0633,0x06A9,0x06CC,0x0644)
-          $m2 = -join [char[]](0x0646,0x0635,0x0628,0x20,0x06A9,0x0627,0x0645,0x0644,0x20,0x0634,0x062F)
-          $m3 = -join [char[]](0x0628,0x0631,0x0646,0x0627,0x0645,0x0647,0x20,0x062D,0x0630,0x0641,0x20,0x0634,0x062F)
+          # English markers (pure ASCII — the templates are English-only since v0.3.2-beta.3):
+          #   m1 = "Headscale Easy Manager" (product name in string literals)
+          #   m2 = "Installation complete." (install success)
+          #   m3 = "Uninstalled."           (uninstall success)
+          $m1 = 'Headscale Easy Manager'
+          $m2 = 'Installation complete.'
+          $m3 = 'Uninstalled.'
 
           # --- 1) Parse with the real PowerShell 5.1 parser ---------------
           foreach ($f in @('mini-services\hem-agent\packaging\templates\install.ps1',
@@ -352,19 +365,39 @@ jobs:
               exit 1
             }
             Write-Host ("PARSE OK: {0} (0 errors)" -f $f)
-            # Persian string literals must survive intact into the AST
+
+            # Pure-ASCII guard (v0.3.2-beta.2 root cause: non-ASCII bytes are
+            # what turns into mojibake when a file is read as ANSI). The UTF-8
+            # BOM (EF BB BF) is the contract and is skipped; everything after
+            # it must be ASCII.
+            $raw = [System.IO.File]::ReadAllBytes((Resolve-Path $f))
+            $start = 0
+            if ($raw.Length -ge 3 -and $raw[0] -eq 0xEF -and $raw[1] -eq 0xBB -and $raw[2] -eq 0xBF) { $start = 3 }
+            $nonAscii = 0
+            if ($raw.Length -gt $start) {
+              $nonAscii = @($raw[$start..($raw.Length-1)] | Where-Object { $_ -gt 0x7F }).Count
+            }
+            if ($nonAscii -gt 0) {
+              Write-Host ("ASCII CHECK FAIL: {0} - {1} non-ASCII byte(s) after the BOM" -f $f, $nonAscii)
+              exit 1
+            }
+            Write-Host ("ASCII OK: {0} - pure ASCII (BOM included)" -f $f)
+
+            # Key English strings must survive intact into the AST
             $hits = $ast.FindAll({ param($n)
               $n -is [System.Management.Automation.Language.StringConstantExpressionAst] -and
               $n.Value.Contains($m1) }, $true)
             if ($hits.Count -lt 1) {
-              Write-Host ("PERSIAN CHECK FAIL: {0} - Persian string did not survive to AST" -f $f)
+              Write-Host ("STRING CHECK FAIL: {0} - product-name string did not survive to AST" -f $f)
               exit 1
             }
-            Write-Host ("PERSIAN OK: {0} - Persian strings intact in AST ({1} hits)" -f $f, $hits.Count)
+            Write-Host ("STRING OK: {0} - product-name strings intact in AST ({1} hits)" -f $f, $hits.Count)
           }
 
           # --- 2) Real install (LOCALAPPDATA + shortcuts, no admin) -------
-          $installOut = & "$PWD\stage\install.ps1" | Out-String
+          # Child powershell.exe -File: the exact way a user runs it, and the
+          # only way Write-Host output is capturable through process stdout.
+          $installOut = & powershell.exe -NoProfile -ExecutionPolicy Bypass -File "$PWD\stage\install.ps1" | Out-String
           $dest = Join-Path $env:LOCALAPPDATA 'HeadscaleEasyManager'
           if (-not (Test-Path (Join-Path $dest 'hem-manager.exe'))) {
             Write-Host "INSTALL FAIL: hem-manager.exe not copied to LOCALAPPDATA"
@@ -386,14 +419,14 @@ jobs:
           if (-not (Test-Path $startLnk))   { Write-Host "INSTALL FAIL: start menu shortcut missing"; exit 1 }
           Write-Host "INSTALL OK: desktop + start menu shortcuts"
           if (-not $installOut.Contains($m2)) {
-            Write-Host "INSTALL FAIL: Persian success message missing/mangled in output"
+            Write-Host "INSTALL FAIL: success message missing/mangled in output"
             Write-Host $installOut
             exit 1
           }
-          Write-Host "INSTALL OK: Persian output intact"
+          Write-Host "INSTALL OK: output intact"
 
           # --- 3) Real uninstall -------------------------------------------
-          $uninstallOut = & "$PWD\stage\uninstall.ps1" | Out-String
+          $uninstallOut = & powershell.exe -NoProfile -ExecutionPolicy Bypass -File "$PWD\stage\uninstall.ps1" | Out-String
           $gone = $false
           foreach ($i in 1..10) {
             if (-not (Test-Path $dest)) { $gone = $true; break }
@@ -409,11 +442,11 @@ jobs:
           if (Test-Path $startLnk)   { Write-Host "UNINSTALL FAIL: start menu shortcut remains"; exit 1 }
           Write-Host "UNINSTALL OK: shortcuts removed"
           if (-not $uninstallOut.Contains($m3)) {
-            Write-Host "UNINSTALL FAIL: Persian message missing/mangled"
+            Write-Host "UNINSTALL FAIL: success message missing/mangled"
             Write-Host $uninstallOut
             exit 1
           }
-          Write-Host "UNINSTALL OK: Persian output intact"
+          Write-Host "UNINSTALL OK: output intact"
           Write-Host "Windows PowerShell 5.1 checks all passed."
 
       - name: Upload artifact (staged windows package)
@@ -425,7 +458,7 @@ jobs:
           retention-days: 7
 
   # ---------------------------------------------------------------------------
-  # شغل لینوکسی — clone تمیز + ساخت بسته‌ها + راستی‌آزمایی زنده
+  # Linux job — clean checks + release build + build-windows
   # ---------------------------------------------------------------------------
   linux:
     name: "Linux - clean checks + release + build-windows"
@@ -515,10 +548,11 @@ jobs:
           ( cd download && sha256sum -c "headscale-easy-manager-v$VERSION.tar.gz.sha256" )
           echo "Release tarball verified."
 
-      # build-windows.sh: UI تازه + installer از درخت کامیت‌شده + کامپایل exe
-      # (cross) + باینری لینوکسی هم‌سورس با «اجرای واقعی» و ~۳۰ چک زنده
-      # (fail-closed، لاگ فایل، توکن/کوکی، اتصال TOFU و exec واقعی SSH روی
-      # سرور آزمایشی 127.0.0.1:2222) + نگهبان بایت ps1 (BOM/CRLF) + zip.
+      # build-windows.sh: fresh UI + installer from the committed tree + exe
+      # compile (cross) + the same-source Linux binary with a "real run" and
+      # ~30 live checks (fail-closed, file log, token/cookie, real SSH TOFU
+      # connection and exec on the test server at 127.0.0.1:2222) + the ps1
+      # byte guards (BOM/CRLF) + the zip.
       - name: Windows package build + live verification (same-source linux binary)
         run: bash mini-services/hem-agent/packaging/build-windows.sh
 

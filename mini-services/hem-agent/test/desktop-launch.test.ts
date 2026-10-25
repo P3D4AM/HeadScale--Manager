@@ -76,8 +76,12 @@ function runExpectExit(env: Record<string, string>, expectInOutput: string[], ti
         reject(new Error("process was killed by a signal"));
         return;
       }
+      // Path-separator portability: Windows prints log paths with backslashes
+      // (logs\hem-agent.log), POSIX with slashes. Needles are matched against
+      // a separator-normalized copy so the same needle works on both.
+      const norm = output.replace(/\\/g, "/");
       for (const needle of expectInOutput) {
-        if (!output.includes(needle)) {
+        if (!norm.includes(needle)) {
           reject(new Error(`"${needle}" not found in output:\n${output}`));
           return;
         }
@@ -170,7 +174,7 @@ test("A10 combined: HEM_AGENT_AUTH=open on the Windows package → auto-desktop 
 //    (on a Linux host; these tests are OS-independent)
 // ===========================================================================
 
-test("B1 bare run: exit≠0 + Persian message + file log with a fatal record (evidence survives)", async () => {
+test("B1 bare run: exit≠0 + clear message + file log with a fatal record (evidence survives)", async () => {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), "hem-b1-"));
   const port = await freePort();
   const r = await runExpectExit(
@@ -193,7 +197,7 @@ test("B1 bare run: exit≠0 + Persian message + file log with a fatal record (ev
   expect(begin).toBeDefined();
 }, 30_000);
 
-test("B2 busy port (two instances): the second gets EADDRINUSE + Persian message + file log — not an unhandled crash", async () => {
+test("B2 busy port (two instances): the second gets EADDRINUSE + clear message + file log — not an unhandled crash", async () => {
   const port = await freePort();
   const home1 = fs.mkdtempSync(path.join(os.tmpdir(), "hem-b2a-"));
   const home2 = fs.mkdtempSync(path.join(os.tmpdir(), "hem-b2b-"));
@@ -241,7 +245,10 @@ test("B3 successful desktop run: the file log is written but the \"token\" is ne
   const port = await freePort();
   const home = fs.mkdtempSync(path.join(os.tmpdir(), "hem-b3-"));
   const child = spawn(process.execPath, [path.join(AGENT_DIR, "index.ts"), "--desktop"], {
-    env: cleanEnv({ HEM_AGENT_PORT: String(port), HEM_AGENT_HOME: home }),
+    // HEM_DESKTOP_NO_BROWSER: keep the test hermetic — without it a real
+    // desktop (or a Windows CI runner with Edge) would open a browser that
+    // consumes the one-time bootstrap token and races with these assertions.
+    env: cleanEnv({ HEM_AGENT_PORT: String(port), HEM_AGENT_HOME: home, HEM_DESKTOP_NO_BROWSER: "1" }),
     stdio: ["ignore", "pipe", "pipe"],
   });
   let output = "";

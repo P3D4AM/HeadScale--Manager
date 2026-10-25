@@ -120,12 +120,13 @@ async function main(): Promise<void> {
   const startupLog = createStartupLog(home, redactor);
 
   // In a compiled binary (Windows exe / Linux binary), import.meta.dir points
-  // into the bundle's virtual filesystem (/$bunfs on POSIX, C:\$bunfs on
-  // Windows); the "folder next to the program itself" (where ui/ lives in the
-  // package) must be derived from process.execPath. Detection lives in
-  // src/exepath.ts — membership of "$bunfs" in the path, not a POSIX absolute
-  // prefix (Windows bug v0.3.1: startsWith("/$bunfs") failed on C:\$bunfs and
-  // the UI was never served; GET / returned ambiguous JSON instead of the UI).
+  // into the bundle's virtual filesystem (/$bunfs on POSIX; on Windows a
+  // virtual drive rooted at "~BUN", e.g. B:\~BUN\root — see the beta.4 note in
+  // src/exepath.ts); the "folder next to the program itself" (where ui/ lives
+  // in the package) must be derived from process.execPath. Detection lives in
+  // src/exepath.ts — never a POSIX-only prefix (Windows bugs v0.3.1 and
+  // v0.3.2-beta.4: ui/ was not found and GET / returned the error page/JSON
+  // instead of the UI).
   const exeDir = programDir(import.meta.dir);
   const uiDir = path.join(exeDir, "ui");
   const uiExists = fs.existsSync(uiDir);
@@ -254,7 +255,16 @@ async function main(): Promise<void> {
       // own machine — the desktop bootstrap delivery channel; it never
       // appears in the audit log, API responses, or the file diagnostic log.)
       console.log(`[hem-agent] desktop UI: ${uiUrl}`);
-      openDefaultBrowser(uiUrl);
+      // HEM_DESKTOP_NO_BROWSER=1 — print the link but never auto-open the
+      // browser (CI, servers, headless runs, or users who prefer opening it
+      // manually). Without this the real default browser is opened, and on a
+      // desktop machine that first browser hit consumes the one-time token —
+      // which is the designed delivery flow.
+      if ((process.env.HEM_DESKTOP_NO_BROWSER ?? "").trim() === "1") {
+        console.log("[hem-agent] (browser auto-open skipped — HEM_DESKTOP_NO_BROWSER=1)");
+      } else {
+        openDefaultBrowser(uiUrl);
+      }
     }
   });
 

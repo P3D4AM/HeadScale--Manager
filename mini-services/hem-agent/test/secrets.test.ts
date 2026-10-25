@@ -9,30 +9,45 @@ import { SecretStore } from "../src/secrets";
 import { tmpHome } from "./helpers";
 
 test("secret store (dev file): round-trip with persist and memory-only", () => {
-  const home = tmpHome("hem-secrets-");
-  const store = new SecretStore(home);
-  expect(store.backend).toBe("file");
+  // Force the file backend on every platform — the vault is the win32 product
+  // default, but this test locks the portable file logic (HEM_SECRET_BACKEND=file
+  // is the documented dev/test escape hatch; the vault itself only runs on a
+  // real interactive Windows session and is honestly not unit-tested here).
+  const prevBackend = process.env.HEM_SECRET_BACKEND;
+  process.env.HEM_SECRET_BACKEND = "file";
+  try {
+    const home = tmpHome("hem-secrets-");
+    const store = new SecretStore(home);
+    expect(store.backend).toBe("file");
 
-  // default: memory only
-  store.set("profile:p1", "MemoryOnly456");
-  expect(store.get("profile:p1")).toBe("MemoryOnly456");
+    // default: memory only
+    store.set("profile:p1", "MemoryOnly456");
+    expect(store.get("profile:p1")).toBe("MemoryOnly456");
 
-  // reload from file — must not see the memory-only secret
-  const store2 = new SecretStore(home);
-  expect(store2.get("profile:p1")).toBeUndefined();
+    // reload from file — must not see the memory-only secret
+    const store2 = new SecretStore(home);
+    expect(store2.get("profile:p1")).toBeUndefined();
 
-  // with persist → real storage
-  store.set("profile:p1", "SuperSecret123", { persist: true });
-  const store3 = new SecretStore(home);
-  expect(store3.get("profile:p1")).toBe("SuperSecret123");
+    // with persist → real storage
+    store.set("profile:p1", "SuperSecret123", { persist: true });
+    const store3 = new SecretStore(home);
+    expect(store3.get("profile:p1")).toBe("SuperSecret123");
 
-  // delete
-  store3.delete("profile:p1");
-  expect(new SecretStore(home).get("profile:p1")).toBeUndefined();
+    // delete
+    store3.delete("profile:p1");
+    expect(new SecretStore(home).get("profile:p1")).toBeUndefined();
 
-  // file permission 0600
-  const st = statSync(join(home, "secrets.json"));
-  expect(st.mode & 0o777).toBe(0o600);
+    // file permission 0600 — POSIX only: on Windows chmod is a no-op and the
+    // mode reads back as 0666; the real Windows protection is the vault
+    // backend (this forced-file mode is a dev/test path, not the product).
+    if (process.platform !== "win32") {
+      const st = statSync(join(home, "secrets.json"));
+      expect(st.mode & 0o777).toBe(0o600);
+    }
+  } finally {
+    if (prevBackend === undefined) delete process.env.HEM_SECRET_BACKEND;
+    else process.env.HEM_SECRET_BACKEND = prevBackend;
+  }
 });
 
 test("redaction: the audit log never writes a full password/key", () => {
@@ -116,6 +131,10 @@ test("profiles.json: full CRUD with no secrets + 0600 permission", () => {
   store.remove(p.id);
   expect(store.list()).toHaveLength(0);
 
-  const st = statSync(join(home, "profiles.json"));
-  expect(st.mode & 0o777).toBe(0o600);
+  // 0600 — POSIX only (on Windows chmod is a no-op; mode reads back 0666 and
+  // the platform's real protection model is ACLs / the vault backend).
+  if (process.platform !== "win32") {
+    const st = statSync(join(home, "profiles.json"));
+    expect(st.mode & 0o777).toBe(0o600);
+  }
 });

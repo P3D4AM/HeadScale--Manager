@@ -39,7 +39,12 @@ export class SecretStore {
   private file?: string;
 
   constructor(home: string) {
-    if (process.platform === "win32") {
+    // HEM_SECRET_BACKEND=file — dev/test escape hatch: force the portable file
+    // backend on Windows too (the product default on win32 is the vault). This
+    // lets the file-backend logic be exercised on every platform/CI and allows
+    // developers on Windows to opt into the simple dev store.
+    const forcedFile = (process.env.HEM_SECRET_BACKEND ?? "").trim().toLowerCase() === "file";
+    if (process.platform === "win32" && !forcedFile) {
       this.backend = "windows-vault";
       return;
     }

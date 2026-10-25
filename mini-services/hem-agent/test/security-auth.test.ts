@@ -476,7 +476,11 @@ test("C7 a real desktop run: generated token + fully locked + one-time + \"no le
   const port = await freePort();
   const home = fs.mkdtempSync(path.join(os.tmpdir(), "hem-c7-"));
   const child = spawn(process.execPath, [path.join(AGENT_DIR, "index.ts"), "--desktop"], {
-    env: cleanEnv({ HEM_AGENT_PORT: String(port), HEM_AGENT_HOME: home }),
+    // HEM_DESKTOP_NO_BROWSER: on a Windows CI runner the auto-opened browser
+    // (Edge) really loads the bootstrap link and consumes the one-time token
+    // before this test can exchange it — the exchange itself must be tested
+    // deterministically (the browser-open flow is a real-user path, not a CI one).
+    env: cleanEnv({ HEM_AGENT_PORT: String(port), HEM_AGENT_HOME: home, HEM_DESKTOP_NO_BROWSER: "1" }),
     stdio: ["ignore", "pipe", "pipe"],
   });
   serverChildren.push(child);

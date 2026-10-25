@@ -161,11 +161,15 @@ Before beta.2, double-clicking `hem-manager.exe` on Windows provided no token, n
 
 The rule now (pure + tested in `test/desktop-launch.test.ts`): desktop mode is enabled by **any** of
 1. `HEM_DESKTOP=1` or `--desktop` (explicit — always wins), **or**
-2. **Windows packaged binary with no auth config at all**: compiled binary (`$bunfs`) on `win32` with **no** `HEM_AGENT_TOKEN` and **no** `HEM_AGENT_AUTH` (blank/whitespace counts as unset) → the user double-clicked the app → desktop with a per-run token. Explicit user choice always wins: if `HEM_AGENT_TOKEN` or `HEM_AGENT_AUTH` is set, the auto-rule is off (service/dev mode unchanged).
+2. **Windows packaged binary with no auth config at all**: compiled binary (bun virtual fs — `$bunfs` on POSIX, the `~BUN` virtual drive on real Windows, e.g. `B:\~BUN\root` — `src/exepath.ts`) on `win32` with **no** `HEM_AGENT_TOKEN` and **no** `HEM_AGENT_AUTH` (blank/whitespace counts as unset) → the user double-clicked the app → desktop with a per-run token. Explicit user choice always wins: if `HEM_AGENT_TOKEN` or `HEM_AGENT_AUTH` is set, the auto-rule is off (service/dev mode unchanged).
+
+In desktop mode the bootstrap URL is printed and the **default browser is auto-opened** with it (that first browser hit consumes the one-time token — the designed delivery flow). `HEM_DESKTOP_NO_BROWSER=1` disables only the auto-open (the URL is still printed): for CI, servers/headless runs, or users who prefer opening it manually — the exchange itself is unchanged.
 
 Linux binaries and `bun` dev runs keep the strict fail-closed refusal (bare = `AUTH_NOT_CONFIGURED`, exit ≠ 0) — covered by `build-windows.sh`'s bare-run live check on the linux binary and by `desktop-launch`/`security-auth` process tests on `bun index.ts`.
 
-Startup diagnostics (new `src/startuplog.ts`): every startup failure is persisted to `<home>/logs/hem-agent.log` (JSONL: ts / phase / code / detail / stack; 256KB rotation; Redactor-filtered — **tokens and passwords never written**). `index.ts` handles `EADDRINUSE` and other listen errors with a clear Persian message + the log path; on interactive Windows runs (TTY) a 30-second auto-closing error dialog is shown (never blocks services/CI — pipes skip it).
+Startup diagnostics (new `src/startuplog.ts`): every startup failure is persisted to `<home>/logs/hem-agent.log` (JSONL: ts / phase / code / detail / stack; 256KB rotation; Redactor-filtered — **tokens and passwords never written**). `index.ts` handles `EADDRINUSE` and other listen errors with a clear message + the log path; on interactive Windows runs (TTY) a 30-second auto-closing error dialog is shown (never blocks services/CI — pipes skip it).
+
+Secret store backends (`src/secrets.ts`): on Windows the product backend is the **Windows Credential Manager (PasswordVault)**; everywhere else (and in dev) a `secrets.json` file with 0600 permissions. `HEM_SECRET_BACKEND=file` is a documented dev/test escape hatch that forces the portable file backend on Windows too (used by CI to exercise the file logic on every platform).
 
 Contradictory configs hard-fail at startup with precise messages: `HEM_AGENT_AUTH=open` + token (`AUTH_OPEN_WITH_TOKEN`), `open` + desktop (`AUTH_DESKTOP_REQUIRES_TOKEN` — desktop always authenticates), `HEM_AGENT_AUTH=token` without token (`AUTH_TOKEN_MISSING`), unknown value (`AUTH_INVALID_POLICY`). Value is case-insensitive.
 

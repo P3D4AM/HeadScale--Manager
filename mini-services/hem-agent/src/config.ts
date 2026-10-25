@@ -4,7 +4,7 @@ import * as path from "node:path";
 import { inCompiledBinary } from "./exepath";
 
 /** Agent version — kept in sync with package.json (v0.3.2: Windows UI bug fix) */
-export const AGENT_VERSION = "0.3.2-beta.3"; // development pre-release (develop) — stable branch: main
+export const AGENT_VERSION = "0.3.2-beta.4"; // development pre-release (develop) — stable branch: main
 
 /** Bind address (loopback by default — network access must be a conscious, token-protected choice) */
 export function agentHost(): string {
@@ -185,7 +185,7 @@ export interface DesktopModeInput {
   argv?: string[];
   /** process.platform */
   platform?: string;
-  /** Are we running from inside a compiled binary? ($bunfs member) */
+  /** Are we running from inside a compiled binary? ($bunfs / ~BUN virtual fs member) */
   compiledBinary?: boolean;
 }
 
@@ -237,7 +237,8 @@ export function desktopMode(): boolean {
 //      to it -> naturally falls through to the next candidate;
 //   3) dev checkout: relative to this source file's location (three folders
 //      up) — only meaningful when running from source; in a compiled binary
-//      import.meta.dir is inside bun's virtual filesystem (/$bunfs) and this
+//      import.meta.dir is inside bun's virtual filesystem ($bunfs on POSIX,
+//      ~BUN virtual drive on Windows — src/exepath.ts) and this
 //      candidate is rejected.
 //   There is NO "developer default path". If no candidate is valid, the
 //   "packaged expectation" is returned so the caller's error message can
@@ -252,7 +253,7 @@ function processExeDir(): string {
   return path.dirname(process.execPath);
 }
 
-/** true when running from inside a compiled binary (bun virtual fs — $bunfs on both platforms) */
+/** true when running from inside a compiled binary (bun virtual fs — $bunfs on POSIX, ~BUN virtual drive on Windows) */
 function inCompiledBinaryRun(): boolean {
   return inCompiledBinary(import.meta.dir);
 }
@@ -279,10 +280,12 @@ export function installerRootCandidates(
   if (env) list.push({ source: "env", path: path.resolve(env) });
   if (exeDir) list.push({ source: "packaged", path: path.join(exeDir, "installer") });
   const devSrc = (srcDir ?? "").trim();
-  // In a compiled binary, the source is inside bun's virtual fs ($bunfs) — a
-  // dev candidate makes no sense. Detection is membership of "$bunfs", not a
-  // POSIX prefix (Windows bug v0.3.1: C:\$bunfs\root was not rejected by
-  // startsWith("/$bunfs") and produced a meaningless dev candidate).
+  // In a compiled binary, the source is inside bun's virtual fs ($bunfs on
+  // POSIX; on Windows a "~BUN" virtual drive — beta.4) — a dev candidate
+  // makes no sense. Detection lives in src/exepath.ts (inCompiledBinary) —
+  // never a POSIX-only prefix (Windows bugs v0.3.1 and v0.3.2-beta.4:
+  // C:\$bunfs\root and B:\~BUN\root were not rejected and produced a
+  // meaningless dev candidate).
   if (devSrc && !inCompiledBinary(devSrc)) {
     list.push({ source: "dev", path: path.resolve(devSrc, "..", "..", "..", "headscale-easy-manager") });
   }

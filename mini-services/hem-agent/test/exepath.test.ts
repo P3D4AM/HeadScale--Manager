@@ -1,10 +1,19 @@
-// Regression tests for the v0.3.1 Windows bug (UI not served from the EXE):
+// Regression tests for the v0.3.1 Windows bug (UI not served from the EXE)
+// and its v0.3.2-beta.4 recurrence on real Windows:
 //
-// On a Windows-compiled binary the bun bundle marker is "C:\$bunfs\root" —
-// with a drive letter and backslashes. The old startsWith("/$bunfs") check only
-// knew POSIX ← exeDir pointed at the virtual fs ← ui/ was never found ← GET /
-// returned the ambiguous JSON {"ok":true,"service":"hem-agent",...} instead of
-// the UI.
+// v0.3.1: the assumed Windows marker was "C:\$bunfs\root" (drive letter +
+// backslashes). The old startsWith("/$bunfs") check only knew POSIX ← exeDir
+// pointed at the virtual fs ← ui/ was never found ← GET / returned the
+// ambiguous JSON {"ok":true,"service":"hem-agent",...} instead of the UI.
+//
+// v0.3.2-beta.4 (observed on the real windows-latest CI runner, bun 1.4.x):
+// a Windows-compiled binary does NOT use "$bunfs" at all — the bundle is
+// mounted on a virtual drive whose root folder is "~BUN" (drive letter
+// varies, commonly B:):
+//     B:\~BUN\root\…
+// "$bunfs" membership alone was still false on real Windows ← the same
+// v0.3.1 failure came back ("ui: MISSING", 503 error page). Both markers are
+// now detected.
 //
 // These tests are pure (a synthetic path is injected) and deterministic on any
 // host — i.e. they simulate and lock the Windows scenario without Windows.
@@ -18,7 +27,7 @@ describe("inCompiledBinary — the $bunfs marker on both platforms", () => {
     expect(inCompiledBinary("/$bunfs/root/mini-services/hem-agent")).toBe(true);
   });
 
-  test("Windows (v0.3.1 bug): C:\\$bunfs\\root\\… ← true — was rejected by startsWith(\"/$bunfs\")", () => {
+  test("Windows (v0.3.1 assumption): C:\\$bunfs\\root\\… ← true — was rejected by startsWith(\"/$bunfs\")", () => {
     expect(inCompiledBinary("C:\\$bunfs\\root\\mini-services\\hem-agent")).toBe(true);
   });
 
@@ -36,6 +45,29 @@ describe("inCompiledBinary — the $bunfs marker on both platforms", () => {
 
   test("empty string ← false (no error)", () => {
     expect(inCompiledBinary("")).toBe(false);
+  });
+});
+
+describe("inCompiledBinary — the REAL Windows virtual drive (v0.3.2-beta.4: ~BUN, observed on windows-latest, bun 1.4.x)", () => {
+  test("the observed CI path: B:\\~BUN\\root\\… ← true (this exact shape failed before beta.4)", () => {
+    expect(inCompiledBinary("B:\\~BUN\\root\\mini-services\\hem-agent")).toBe(true);
+  });
+
+  test("any drive letter works: D:\\~BUN\\root ← true", () => {
+    expect(inCompiledBinary("D:\\~BUN\\root")).toBe(true);
+  });
+
+  test("forward slashes too: B:/~BUN/root/agent ← true", () => {
+    expect(inCompiledBinary("B:/~BUN/root/agent")).toBe(true);
+  });
+
+  test("drive-less form: \\~BUN\\root\\agent ← true", () => {
+    expect(inCompiledBinary("\\~BUN\\root\\agent")).toBe(true);
+  });
+
+  test("a regular folder merely NAMED ~BUN deeper in a real tree ← false (not the virtual root)", () => {
+    expect(inCompiledBinary("C:\\dev\\~BUN\\my-project\\agent")).toBe(false);
+    expect(inCompiledBinary("/home/z/~BUN/agent")).toBe(false);
   });
 });
 
@@ -58,6 +90,18 @@ describe("programDir — the folder next to the executable", () => {
         "C:\\Users\\Ali Karimi\\AppData\\Local\\HeadscaleEasyManager\\hem-manager.exe",
       ),
     ).toBe("C:\\Users\\Ali Karimi\\AppData\\Local\\HeadscaleEasyManager");
+  });
+
+  test("Windows compiled binary (REAL beta.4 shape): B:\\~BUN\\root srcDir → the folder next to the EXE", () => {
+    // the exact import.meta.dir/execPath combination observed on the real
+    // windows-latest runner — before beta.4 this returned "B:\\~BUN\\root"
+    // and the packaged UI was never found
+    expect(
+      programDir(
+        "B:\\~BUN\\root\\mini-services\\hem-agent",
+        "C:\\Users\\runneradmin\\AppData\\Local\\Temp\\hem-stage\\hem-manager.exe",
+      ),
+    ).toBe("C:\\Users\\runneradmin\\AppData\\Local\\Temp\\hem-stage");
   });
 
   test("POSIX dev mode: the source folder itself (execPath is bun itself — meaningless)", () => {
@@ -87,6 +131,17 @@ describe("config.installerRootCandidates — the dev candidate is dropped in a W
   test("a POSIX $bunfs srcDir ← as before: no dev (preserved behavior)", () => {
     const cands = installerRootCandidates(undefined, "/opt/fake-exe", "/$bunfs/root/mini-services/hem-agent/src");
     expect(cands.map((c) => c.source)).not.toContain("dev");
+  });
+
+  test("a REAL Windows ~BUN virtual-drive srcDir (beta.4) ← only env/packaged; no dev", () => {
+    const cands = installerRootCandidates(
+      undefined,
+      "C:\\Users\\runneradmin\\AppData\\Local\\Temp\\hem-stage",
+      "B:\\~BUN\\root\\mini-services\\hem-agent\\src",
+    );
+    const sources = cands.map((c) => c.source);
+    expect(sources).not.toContain("dev");
+    expect(sources).toContain("packaged");
   });
 
   test("a regular dev srcDir ← the dev candidate exists (preserved behavior)", () => {
