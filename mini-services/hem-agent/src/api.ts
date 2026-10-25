@@ -60,8 +60,10 @@ export interface AppDeps {
   redactor: Redactor;
   jobs: JobManager;
   token?: string;
-  /** پوشهٔ UI استاتیک (اختیاری) */
+  /** پوشهٔ UI استاتیک — فقط وقتی سرو می‌شود که واقعاً موجود باشد */
   uiDir?: string;
+  /** مسیری که ui/ در آن «جست‌وجو شده» — برای پیام خطای روشن وقتی UI نیست */
+  uiDirExpected?: string;
   version: string;
   startedAt: number;
 }
@@ -764,7 +766,11 @@ export function createApp(deps: AppDeps): Express {
     res.status(404).json({ ok: false, error: "NOT_FOUND", message: `مسیر ${req.method} ${req.path} یافت نشد.` });
   });
 
-  // ------------------------------------------------------------------ UI استاتیک (اختیاری)
+  // ------------------------------------------------------------------ UI استاتیک
+  // (موجود) — assetها + fallback SPA؛ (غایب) — صفحهٔ خطای روشن فارسی، هرگز JSON مبهم.
+  // ترتیب مهم است: تبادل یک‌بارمصرف ?token= (بالا) «قبل از» این بخش است، پس
+  // GET /?token=… ابتدا 303+کوکی می‌دهد و سپس همان GET / اینجا index.html می‌گیرد.
+  const uiMissingPage = uiMissingErrorPage(deps.uiDirExpected ?? deps.uiDir);
   if (deps.uiDir && fs.existsSync(deps.uiDir)) {
     const indexFile = path.join(deps.uiDir, "index.html");
     app.use(express.static(deps.uiDir, { index: false }));
@@ -781,8 +787,16 @@ export function createApp(deps: AppDeps): Express {
       next();
     });
   }
-  app.get("/", (_req, res) => {
-    res.json({ ok: true, service: "hem-agent", version: deps.version });
+  // UI در دسترس نیست (یا index.html داخلش نیست) — پاسخ «روشـن»، نه JSON مبهم:
+  // کاربر در مرورگر صفحهٔ فارسی با علت + مسیر مورد انتظار + راه‌حل می‌بیند و
+  // همین رخداد در لاگ سرور هم ثبت می‌شود. /api/health همچنان JSON است (بالاتر).
+  app.use((req, res) => {
+    console.error(
+      `[hem-agent] UI not available: ${req.method} ${req.originalUrl} → 503 error page (expected ui/ at: ${deps.uiDirExpected ?? deps.uiDir ?? "?"})`,
+    );
+    res.status(503);
+    res.setHeader("Cache-Control", "no-store");
+    res.type("html").send(uiMissingPage);
   });
 
   // ------------------------------------------------------------------ خطای مرکزی
@@ -818,6 +832,51 @@ export function createApp(deps: AppDeps): Express {
 function maskProfileSecrets(p: unknown): unknown {
   // پروفایل‌ها از ابتدا سری ندارند — فقط مطمئن می‌شویم چیزی شبیه رمز برگشته نباشد
   return p;
+}
+
+/** escape ساده برای نمایش مسیر داخل HTML صفحهٔ خطا */
+function escapeHtml(s: string): string {
+  return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+}
+
+/**
+ * صفحهٔ خطای «فایل‌های UI پیدا نشد» — v0.3.2: جایگزین JSON مبهمی که در باگ
+ * ویندوزی به کاربر نمایش داده می‌شد. علت + مسیر مورد انتظار + راه‌حل، فارسی/RTL.
+ * مسیرِ مورد انتظار (پوشهٔ کاربر خودش است) نمایش داده می‌شود — هیچ دادهٔ حساسی نیست.
+ */
+function uiMissingErrorPage(expectedUiDir?: string): string {
+  const where = expectedUiDir ? escapeHtml(expectedUiDir) : "کنار فایل اجرایی برنامه";
+  return `<!DOCTYPE html>
+<html lang="fa" dir="rtl">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1"/>
+<title>مدیر آسان هداسکیل — فایل‌های رابط کاربری پیدا نشد</title>
+<style>
+  body{font-family:Tahoma,Segoe UI,sans-serif;direction:rtl;text-align:center;background:#fafaf9;color:#1c1917;margin:0;padding:2rem 1rem}
+  .card{max-width:640px;margin:0 auto;background:#fff;border:1px solid #e7e5e4;border-radius:12px;padding:2rem;box-shadow:0 1px 3px rgba(0,0,0,.06)}
+  h1{font-size:1.35rem;margin:0 0 1rem}
+  p{line-height:1.9;margin:.5rem 0}
+  code{direction:ltr;display:inline-block;background:#f5f5f4;border:1px solid #e7e5e4;border-radius:6px;padding:.15rem .5rem;font-size:.9em;word-break:break-all}
+  .warn{color:#b45309;font-weight:700}
+  ol{text-align:right;line-height:2;display:inline-block;margin:.5rem 0;padding-right:1.25rem}
+</style>
+</head>
+<body>
+<div class="card">
+<h1>⚠️ فایل‌های رابط کاربری پیدا نشد</h1>
+<p>برنامهٔ «مدیر آسان هداسکیل» اجرا شده است، اما پوشهٔ <code>ui/</code> — که رابط گرافیکی در آن است — کنار فایل اجرایی وجود ندارد.</p>
+<p class="warn">مسیری که جست‌وجو شد: <code>${where}</code></p>
+<h2>راه‌حل</h2>
+<ol>
+<li>بستهٔ ZIP رسمی را <b>کامل</b> استخراج کنید (راست‌کلیک → Extract All)؛ فایل‌های <code>hem-manager.exe</code> و <code>ui/</code> و <code>installer/</code> باید کنار هم بمانند.</li>
+<li>برنامه را از داخل پوشهٔ استخراج‌شده اجرا کنید — <b>نه</b> از داخل پیش‌نمایش ZIP (اجرای EXE از داخل پیش‌نمایش، پوشه‌ها را کنارش نمی‌بیند).</li>
+<li>اگر از install.ps1 استفاده کرده‌اید، مطمئن شوید نصب از روی بستهٔ سالم انجام شده و پوشهٔ مقصد (<code>%LOCALAPPDATA%\\HeadscaleEasyManager</code>) پوشهٔ <code>ui</code> را دارد.</li>
+</ol>
+<p>پس از رفع، همین نشانی را دوباره باز کنید.</p>
+</div>
+</body>
+</html>`;
 }
 
 /** توکن درخواست: هدر X-HEM-Token یا کوکی hem_token — با توکن مورد انتظار یکی است؟ (timing-safe) */

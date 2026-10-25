@@ -18,6 +18,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { Server as IOServer } from "socket.io";
 import { agentHome, agentHost, agentPort, agentToken, desktopMode, AGENT_VERSION, installerRootStatus } from "./src/config";
+import { programDir } from "./src/exepath";
 import { createApp } from "./src/api";
 import { attachEvents, JobManager } from "./src/events";
 import { SessionManager } from "./src/sessions";
@@ -37,10 +38,14 @@ const jobs = new JobManager();
 const manager = new SessionManager({ home, profiles, secrets, audit, redactor });
 
 // در باینری کامپایل‌شده (exe ویندوزی / باینری لینوکسی)، import.meta.dir به فایل‌سیستم
-// مجازی باندل اشاره می‌کند (/$bunfs/root)؛ پوشهٔ «کنار خود برنامه» (جایی که ui/
-// در بسته قرار دارد) باید از process.execPath گرفته شود.
-const exeDir = import.meta.dir.startsWith("/$bunfs") ? path.dirname(process.execPath) : import.meta.dir;
+// مجازی باندل اشاره می‌کند (/$bunfs روی پوزیکس، C:\$bunfs روی ویندوز)؛ پوشهٔ «کنار
+// خود برنامه» (جایی که ui/ در بسته قرار دارد) باید از process.execPath گرفته شود.
+// تشخیص در src/exepath.ts — عضویت «$bunfs» در مسیر، نه پیشوند مطلق پوزیکس
+// (باگ ویندوز v0.3.1: startsWith("/$bunfs") روی C:\$bunfs رد می‌شد و UI هرگز
+// سرو نمی‌شد؛ GET / به‌جای رابط، JSON مبهم می‌داد).
+const exeDir = programDir(import.meta.dir);
 const uiDir = path.join(exeDir, "ui");
+const uiExists = fs.existsSync(uiDir);
 
 // --- توکن: صریح از محیط، یا (فقط در حالت دسکتاپ) تصادفی برای این اجرا
 const isDesktop = desktopMode();
@@ -59,7 +64,10 @@ const app = createApp({
   redactor,
   jobs,
   token,
-  uiDir: fs.existsSync(uiDir) ? uiDir : undefined,
+  // uiDir فقط وقتی واقعاً موجود است سرو می‌شود؛ مسیر «مورد انتظار» همیشه
+  // پاس داده می‌شود تا صفحهٔ خطا/لاگ دقیق بگوید کجا گشسته‌ایم (نه JSON مبهم).
+  uiDir: uiExists ? uiDir : undefined,
+  uiDirExpected: uiDir,
   version: AGENT_VERSION,
   startedAt: Date.now(),
 });
@@ -68,9 +76,17 @@ const host = agentHost();
 const port = agentPort();
 const uiUrl = `http://127.0.0.1:${port}/${token ? `?token=${token}` : ""}`;
 
-// صداقت راه‌اندازی (v0.3.1 §1): وضعیت مخزن نصب‌کننده همیشه گزارش می‌شود —
-// اگر installer/ کنار برنامه نیست، ویزارد نصب با خطای روشن متوقف می‌شود و
-// هرگز «آماده/موفق» اعلام نمی‌شود.
+// صداقت راه‌اندازی (v0.3.1 §1) + خطای روشن نبودِ UI: اگر ui/ کنار برنامه نیست،
+// هرگز سکوت نمی‌کنیم — لاگ صریح چاپ می‌شود و GET / صفحهٔ خطای فارسیِ روشن
+// می‌دهد (api.ts)، نه JSON مبهم. (باگ ویندوز v0.3.1 دقیقاً همین‌جا بی‌صدا رد شد.)
+if (!uiExists) {
+  console.error(`[hem-agent] UI NOT FOUND — expected ui/ at: ${uiDir}`);
+  console.error(
+    "[hem-agent] ⚠ بدون پوشهٔ ui/ کنار برنامه، رابط کاربری سرو نمی‌شود؛ GET / صفحهٔ خطای روشن می‌دهد (نه برنامه). " +
+      "بستهٔ رسمی ZIP را «کامل» استخراج کنید — hem-manager.exe و ui/ و installer/ باید کنار هم بمانند؛ " +
+      "EXE را از داخل پیش‌نمایش ZIP اجرا نکنید.",
+  );
+}
 const rootStatus = installerRootStatus();
 if (rootStatus.ok) {
   console.log(`[hem-agent] installer: ok (${rootStatus.source}) → ${rootStatus.path}`);
@@ -86,7 +102,7 @@ if (rootStatus.ok) {
 const server = app.listen(port, host, () => {
   console.log(`[hem-agent] listening on http://${host}:${port} (home: ${home})`);
   console.log(
-    `[hem-agent] version ${AGENT_VERSION} | platform ${process.platform} | ui: ${fs.existsSync(uiDir) ? "served" : "none"}${isDesktop ? " | mode: desktop" : ""}`,
+    `[hem-agent] version ${AGENT_VERSION} | platform ${process.platform} | ui: ${uiExists ? `served (${uiDir})` : `MISSING (expected ${uiDir})`}${isDesktop ? " | mode: desktop" : ""}`,
   );
   if (isDesktop) {
     if (tokenGenerated) {

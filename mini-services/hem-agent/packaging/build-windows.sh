@@ -355,6 +355,13 @@ r=0; grep -q 'lang="fa"' "$head_root" || r=1; grep -q 'Headscale Easy Manager' "
 chk "GET / (پس از ریدایرکت 303) → index.html با نشانگر فارسی (lang=fa + title)" $r
 r=0; [ "$code" = 200 ] || r=1
 chk "GET / → HTTP 200 پس از 303 (کد نهایی: $code)" $r
+# v0.3.2 — ضد باگ ویندوزی: GET / باید text/html باشد، هرگز JSON مبهم سلامت
+root_ct="$(curl -s -o /dev/null -w '%{content_type}' -H "Cookie: hem_token=$TOKEN" "http://127.0.0.1:$HEM_UI_PORT/")"
+r=0; case "$root_ct" in text/html*) ;; *) r=1;; esac
+chk "GET / → Content-Type: text/html (نه JSON مبهم — regression باگ UI ویندوزی)" $r
+root_body="$(curl -s -H "Cookie: hem_token=$TOKEN" "http://127.0.0.1:$HEM_UI_PORT/")"
+r=0; echo "$root_body" | grep -q '"service":"hem-agent"' && r=1
+chk "GET / هرگز JSON سلامت نمی‌دهد (بدنه بدون service:hem-agent)" $r
 replay_hdr="$(mktemp)"
 curl -s -o /dev/null -D "$replay_hdr" "http://127.0.0.1:$HEM_UI_PORT/?token=$TOKEN"
 r=0; grep -qi '^set-cookie: *hem_token=' "$replay_hdr" && r=1
