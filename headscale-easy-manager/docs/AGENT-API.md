@@ -34,9 +34,9 @@ mini-services/hem-agent/
     └── *.test.ts         # bun test
 ```
 
-- `bun run dev` → `bun --hot index.ts`. Server binds **127.0.0.1 only**. Gateway access in sandbox uses `?XTransformPort=3005` (agent MUST ignore the query param itself).
-- Optional bearer token (`X-HEM-Token`): if env `HEM_AGENT_TOKEN` set (desktop mode), every /api request must carry it (header or `hem_token` cookie; comparison is timing-safe). UI is opened with `/?token=…` — **one-time exchange (v0.3.1 §4)**: the first GET of a UI path with the correct token sets a session cookie (`HttpOnly; SameSite=Strict`, no Max-Age) and 303-redirects to the same path without `token` (other query params like `XTransformPort` are preserved); replaying the link from browser history/logs never yields another cookie, and `token` in a query string is never an API auth method. WebSocket (socket.io) connections are authenticated the same way — connections without a valid header/cookie are disconnected immediately and receive no events. Tests: `test/auth.test.ts` (positive+negative). In sandbox dev it is unset.
-- **UI static serving**: if `ui/` dir exists → serve it at `/` (SPA fallback to index.html, no cache headers for index.html). Else `/` returns `{ok:true, service:'hem-agent'}`.
+- `bun run dev` → `bun --hot index.ts`. Server binds **127.0.0.1 only** by default. Gateway access in sandbox uses `?XTransformPort=3005` (agent MUST ignore the query param itself).
+- **Authentication model (v0.3.2 §2 — fail-closed; full contract in §11):** with a token (explicit `HEM_AGENT_TOKEN`, or per-run generated in desktop mode) every `/api` request except public minimal `GET /api/health` must carry `X-HEM-Token` header or `hem_token` cookie (timing-safe compare). **Missing token never means "open"**: without `HEM_AGENT_TOKEN` and without explicit `HEM_AGENT_AUTH=open` (loopback-only, documented dev exception) the agent **refuses to start** with a clear Persian error and non-zero exit. UI is opened with `/?token=…` — **one-time exchange (v0.3.1 §4)**: the first GET of a UI path with the correct token sets a session cookie (`HttpOnly; SameSite=Strict`, no Max-Age) and 303-redirects to the same path without `token` (other query params like `XTransformPort` are preserved); replaying the link from browser history/logs never yields another cookie, and `token` in a query string is never an API auth method. WebSocket (socket.io) connections are authenticated **identically** to HTTP (same header/cookie, timing-safe) — connections without a valid header/cookie are disconnected immediately and receive no events. Tests: `test/auth.test.ts` + `test/security-auth.test.ts` (all 7 mandated scenarios incl. real-process startup refusals).
+- **UI static serving**: if `ui/` dir exists → serve it at `/` (SPA fallback to index.html, no cache headers for index.html). Else `/` returns a **503 `text/html` clear Persian error page** (cause + searched path + step-by-step fix; also logged server-side) — never ambiguous JSON (v0.3.2 Windows-UI bug). `/api/health` is always proper JSON.
 
 ## 2. Facts (verified against REAL headscale v0.29.5 binary in this sandbox)
 
@@ -142,3 +142,38 @@ All destructive ops: agent asks UI confirm BEFORE running; after run, re-fetch l
 - Sections (hash routes): `#/` dashboard+home, `#/connect`, `#/install`, `#/users`, `#/nodes`, `#/keys`, `#/routes`, `#/policy`, `#/config`, `#/server` (services+logs+ports+disk), `#/backup` (backup/restore/update), `#/console`, `#/learn` (existing 14 chapters, content build-time generated), `#/help` (troubleshooting data). Global header: connection status pill (connected host / disconnected), quick connect button.
 - Destructive actions: explicit confirm dialog quoting REAL object names (e.g. node name+id) + typed confirmation for destroy/restore/stop/policy-set/config-set.
 - PreAuthKey/APIKey full value: shown ONCE in a copyable secure reveal, warning "این کلید دیگر نمایش داده نمی‌شود".
+
+## 11. Authentication model (v0.3.2 §2 — fail-closed; single source of truth)
+
+Fixed vulnerability: previously the `/api` middleware passed requests through **without authentication whenever `HEM_AGENT_TOKEN` was unset**, and WebSocket had the same hole — "no token" silently meant "fully open service". The model below replaces it; every combination is explicit and tested (`test/security-auth.test.ts`, 31 tests incl. real-process startup checks).
+
+### Modes
+
+| Mode | How enabled | Behavior |
+|---|---|---|
+| `token` | `HEM_AGENT_TOKEN` set (any run), **or** desktop mode (`HEM_DESKTOP=1` / `--desktop` — explicit token, else per-run `randomBytes(24)` hex), **or** `HEM_AGENT_AUTH=token` (+ token/desktop) | All `/api` except public minimal `GET /api/health` and **all** WebSocket connections require `X-HEM-Token` header or `hem_token` cookie (timing-safe). 401 `UNAUTHORIZED` otherwise. |
+| `open` | `HEM_AGENT_AUTH=open` **explicitly** (non-desktop, no token) | Documented, limited dev exception: no auth — **refuses to start on any non-loopback `HEM_AGENT_HOST`** (exit ≠ 0). Loud warning logged. |
+| *(neither)* | no token, no `HEM_AGENT_AUTH`, non-desktop | **Refuses to start** — clear Persian error `AUTH_NOT_CONFIGURED`, exit ≠ 0. Defensive layer inside `createApp`/`attachEvents` answers 503 `AUTH_NOT_CONFIGURED` / disconnects WS (never open). |
+
+Contradictory configs hard-fail at startup with precise messages: `HEM_AGENT_AUTH=open` + token (`AUTH_OPEN_WITH_TOKEN`), `open` + desktop (`AUTH_DESKTOP_REQUIRES_TOKEN` — desktop always authenticates), `HEM_AGENT_AUTH=token` without token (`AUTH_TOKEN_MISSING`), unknown value (`AUTH_INVALID_POLICY`). Value is case-insensitive.
+
+### Bind policy
+
+- Default host `127.0.0.1`. `HEM_AGENT_HOST` is a conscious network choice:
+  - `open` + non-loopback → **startup refused** (unauthenticated service must never sit on the network).
+  - `token` + non-loopback → starts, with an explicit warning (authenticated network service is a conscious decision).
+- Loopback definition: `127.0.0.0/8`, `localhost`, `::1` (`isLoopbackHost`).
+
+### Public paths (explicit & minimal — the ONLY unauthenticated API)
+
+- `GET /api/health` exactly: unauthenticated → `{ok, service, version}` only; authenticated (or `open`) → adds `uptimeSec, platform, sessions`. No other path or method is public (`POST /api/health`, `/api/healthX`, `/api/health/extra` → 401/503). Everything else under `/api` requires auth in `token` mode.
+
+### HTTP ↔ WebSocket equivalence
+
+Same credential channels (header first, then cookie), same timing-safe comparison, same decision order (`open` → allow; valid token → allow; otherwise reject). WS rejection logs the remote address and reason — **never the token value**.
+
+### Token transport & leakage rules
+
+- `?token=` in query is **only** the one-time UI bootstrap (GET, non-`/api` paths, first use only, timing-safe, sets `HttpOnly; SameSite=Strict` session cookie, 303 cleans the URL, preserves other query params). It is never an API/WS auth method.
+- Desktop per-run token is printed **only** on the `desktop UI:` console line (the bootstrap delivery channel on the user's own machine). It never appears in: audit.log (all entries pass the Redactor), any API response body, error pages, or any other log line (tested by `security-auth` C7: exactly one line contains the token).
+- URLs logged by the server (e.g. the UI-missing 503 handler) pass through `Redactor.redactText` — a replayed bootstrap link `/?token=…` is logged as `token=***` (fixed v0.3.2 §2 — previously leaked).

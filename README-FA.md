@@ -69,8 +69,8 @@ bash scripts/release.sh
 این اسکریپت: محتوای آموزش را بازتولید می‌کند، `tsc --noEmit` و `lint` را به‌عنوان گیت الزامی اجرا می‌کند، بسته را فقط از allowlist گرد می‌آورد (مخزن پایتون از `git archive HEAD` — بدون `.git` و کش‌ها؛ بدون `.env`، دیتابیس توسعه، `node_modules` و لاگ‌ها)، سپس محتوای تاربال را خودش بررسی می‌کند و خروجی را در `download/` می‌نویسد:
 
 ```
-download/headscale-easy-manager-v0.3.2.tar.gz
-download/headscale-easy-manager-v0.3.2.tar.gz.sha256
+download/headscale-easy-manager-v0.3.2-beta.1.tar.gz
+download/headscale-easy-manager-v0.3.2-beta.1.tar.gz.sha256
 ```
 
 ## ساختار پوشه‌ها
