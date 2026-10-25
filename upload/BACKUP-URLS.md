@@ -78,6 +78,30 @@ d8c33cdaa9512e49c144150d30159e320a47af0b53330b5c5dd9498f30a6c769  HeadscaleEasyM
 
 ---
 
+## v0.3.2-beta.4 (۲۰۲۶-۱۰-۲۵) — «UI بستهٔ ویندوزی روی ویندوزِ واقعی» (کامیت f4716f4 روی develop — **CI هر دو شغل ویندوزی/لینوکسی سبز** + GitHub Release منتشر شد)
+
+| فایل | نشانی دانلود | ماندگاری سایت |
+|---|---|---|
+| HeadscaleEasyManager-v0.3.2-beta.4-win64.zip (۳۸MB) | https://gofile.io/d/QH8Q0bPi | بلندمدت (gofile.io) — md5 با پاسخ سرور تطبیق شد |
+| HeadscaleEasyManager-v0.3.2-beta.4-win64.zip | https://tmpfiles.org/wrA5VCj8CtA3/headscaleeasymanager-v0.3.2-beta.4-win64.zip | ۶۰ دقیقه (tmpfiles.org) |
+| HeadscaleEasyManager-v0.3.2-beta.4-win64.zip.sha256 | https://gofile.io/d/HndgVGDd | بلندمدت (gofile.io) |
+| headscale-easy-manager-v0.3.2-beta.4.tar.gz (۷۹۶K) | https://gofile.io/d/rPSMD1Up | بلندمدت (gofile.io) — md5 با پاسخ سرور تطبیق شد |
+| headscale-easy-manager-v0.3.2-beta.4.tar.gz | https://d.uguu.se/eVFORAEa.gz | ۴۸ ساعت (uguu.se) |
+| headscale-easy-manager-v0.3.2-beta.4.tar.gz | https://tmpfiles.org/wgAKVMj0CA60/headscale-easy-manager-v0.3.2-beta.4.tar.gz | ۶۰ دقیقه (tmpfiles.org) |
+| headscale-easy-manager-v0.3.2-beta.4.tar.gz.sha256 | https://gofile.io/d/muRPvXtQ | بلندمدت (gofile.io) |
+
+```
+cee64b28298dc09fde2026d02f920203e46bafa8d2902fb12c5c81502605734a  HeadscaleEasyManager-v0.3.2-beta.4-win64.zip
+de9eb726d8d11ef8be6ae48fcac1207f6a86cfb28d856edf210a3bf7e6bbf924  headscale-easy-manager-v0.3.2-beta.4.tar.gz
+```
+
+### یادداشت
+- **پشتیبان بادوام اصلی: GitHub Release v0.3.2-beta.4** (هر ۴ دارایی پس از آپلود دوباره دانلود و sha256 بایت‌به‌بایت تطبیق شد): https://github.com/P3D4AM/HeadScale-Manager/releases/tag/v0.3.2-beta.4
+- این نسخه حاصل اولین اجرای سبز CI ویندوزی واقعی است: اجرای واقعی EXE روی windows-latest (۱۲ چک زنده + شبیه‌سازی دابل‌کلیک + fail-closed + نصب/حذف واقعی با PowerShell 5.1). ریشهٔ باگ مسیر: درایو مجازی `~BUN` در bun ویندوزی (نه `$bunfs`).
+- v0.3.2-beta.3 (سیاست انگلیسی‌سازی) هرگز Release نشد؛ محتوایش کامل در beta.4 است (کامیت‌های ae048be/bec73b9 روی develop).
+
+---
+
 ## v0.3.2-beta.3 (۲۰۲۶-۱۰-۲۵) — «ترمینال و کامنت‌ها فقط انگلیسی» (کامیت ec81a08 روی develop — هنوز push نشده: توکن این سندباکس باطل است؛ جزئیات در worklog تسک ۱۹)
 
 ### بستهٔ ویندوزی (تست‌شده با Parser واقعی PowerShell + ۳۰ چک زندهٔ باینری هم‌سورس)
