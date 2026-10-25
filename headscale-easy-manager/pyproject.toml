@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "hem"
-version = "0.3.1"
+version = "0.3.2"
 description = "Headscale Easy Manager — نصب‌کننده هوشمند و مدیر CLI برای Headscale (با آموزش فارسی)"
 readme = "README.md"
 requires-python = ">=3.10"
