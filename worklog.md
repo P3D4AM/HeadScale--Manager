@@ -525,3 +525,48 @@ Stage Summary:
 - پذیرش §۶: همهٔ تست‌ها (111 agent + 104 python + 43 قابل‌حمل CI) سبز؛ lint/typecheck بدون ignore؛ build واقعی؛ SHA-256 همه‌جا؛ بسته‌ها بررسی‌شده؛ صفر موفقیت کاذب (SUDO_REQUIRED/لغو/NOT_FOUND صادقانه).
 - بستهٔ نهایی: download/headscale-easy-manager-v0.3.1.tar.gz (sha 14dd9711…) + HeadscaleEasyManager-v0.3.1-win64.zip (sha 219afa88…) — هر دو در GitHub Release v0.3.1.
 - آزموده‌نشدهٔ صادقانه: ① اجرای hem-manager.exe روی خودِ ویندوز → نیازمند فعال‌سازی CI (مجوز Workflows توکن) یا ویندوز واقعی؛ تا آن موقع باینری لینوکسیِ هم‌سورس زنده آزموده شد (۲۱ [OK]). ② نصب واقعی روی اوبونتوی تازه با systemd در سندباکس/CI ممکن نیست (systemd نیست) — dry-run/منطق با ۱۰۵+ تست؛ ③ اتصال SSH به VPS واقعی در CI نه (نیازمند سرور) — سرور آزمایشی ۲۲۲۲ پوشش می‌دهد؛ ④ پشتیبان gofile در این جلسه پاسخ نداد.
+
+---
+Task ID: 14 (پذیرش نهایی v0.3.1 — فقط موارد باز)
+Agent: Z.ai Code (Main Orchestrator)
+Task: فاز نهایی پذیرش — CI ویندوزی، پذیرش نصب Ubuntu، بازبینی نهایی بسته‌ها، گزارش سه‌گانه
+
+Work Log:
+- بازسازی وضعیت: فایل CI نسخهٔ قبلی از دیسک پاک شده بود و .github/ در .git/info/exclude بلاک بود؛ خروجی‌های dist/ و download/ هم با snapshot پاک شده بودند. node_modules عامل هم پاک بود → bun install مجدد (107 پکیج).
+- بازسازی کامل .github/workflows/windows-ci.yml (۲۸۶ خط، yaml parse ✓، ۲ job / ۲۲ step): job windows = windows-latest با نصب وابستگی‌ها، تست‌های portable (auth/allowlist/secrets=۴۳)، typecheck (agent+root)، next build، کامپایل exe، و «اجرای واقعی EXE» با ۱۴ چک زنده (401/200، توکن یک‌بارمصرف 303+Set-Cookie جلسه‌ای، replay مرده، installer: ok (packaged)، UI فارسی، SPA fallback+no-store، XTransformPort، SHA-256) + artifact. job linux = clone تمیز: docs/lint/typecheck/next build/pytest کامل/تست‌های portable/release.sh/build-windows.sh (راستی‌آزمایی زندهٔ SSH) + artifact.
+- پاک‌سازی گیت: حذف .github/ از exclude، core.fileMode=false، reset کامیت فقط-مُدِ push‌نشدهٔ 65f0b3c (بدون هیچ تغییر محتوا)، commit مشخص 817f208 فقط با فایل CI.
+- push واقعی رد شد: «refusing to allow a Personal Access Token to create or update workflow `.github/workflows/windows-ci.yml` without `workflow` scope» + API PUT هم 403 «Resource not accessible by personal access token». توکن = fine-grained (github_pat_، ۹۳ نویسه) بدون مجوز Workflows؛ هیچ GitHub App credentials در محیط نیست. dry-run گیت فریب‌دهنده بود (قبول کرد) — پروب واقعی فقط push/API است. کامیت 817f208 روی main محلی آمادهٔ push (۱ جلوتر از origin).
+- اجرای GitHub Actions: total_runs = 0 (push رد شده → هیچ Run وجود ندارد؛ ادعایی نشد).
+- پذیرش Ubuntu: سندباکس = Debian 13 container با PID1=tini (بدون systemd)، بدون docker/podman/debootstrap/proot/ufw/sshd و sudo رمزخواه. VM اوبونتوی تمیز ممکن نیست → موارد systemd/UFW/SSH واقعی صادقانه «آزموده‌نشده» اعلام شد (dry-run هرگز معادل معرفی نشد). پوشش واقعی موجود: pytest کامل 104/104 (شامل منطق backup/restore، update/rollback، ایمنی UFW با exec شبیه‌سازی‌شده، dry-run تعاملی/غیرتعاملی install.sh). unit سیستم از .deb رسمی headscale نصب می‌شود (systemd/README.md) — واحد سفارشی‌ای برای verify نیست.
+- بازبینی بسته‌ها (از «فایل نهایی» = دارایی GitHub Release v0.3.1 دانلودشده): tar.gz sha=14dd9711… و zip sha=6e97f838… هر دو = محتوای دارایی .sha256 = رکورد BACKUP-URLS.md (sha256sum -c هر دو OK). ZIP: ۱۵۴ فایل، hem-manager.exe (100,504,064B، sha 065e9a39…)، installer/install.sh+hsctl+pyproject کنار EXE، ui/ با lang=fa+عنوان فارسی، install.ps1/uninstall.ps1/README؛ صفر مورد ممنوعه (.env/.git/node_modules/sqlite/log/کلید/pem)؛ اسکن محتوا: بدون PRIVATE KEY و بدون توکن hardcode در UI bundle. tar.gz: ۳۱۹ فایل، ۱۵ فصل docs/fa، صفر مورد ممنوعه، ساختار allowlist درست.
+- تست‌های auth و Socket.IO: auth.test.ts 19/19 (امروز واقعاً اجرا شد) — WS بدون توکن/توکن نادرست → قطع (منفی)، WS هدر/کوکی معتبر → متصل+job:cancel با ack، HTTP 401/200/303 یک‌بارمصرف/403 Origin. guard پیاده‌سازی: attachEvents → handshakeTokenMatches ناموفق → socket.disconnect(true) بلافاصله، پیش از join هر room. portable سه‌فایلی: 43/43.
+- یکسانیت نسخه: package.json بیرونی/agent/AGENT_VERSION/__init__.py/pyproject همگی 0.3.1.
+- انتشار دوباره نشد؛ تنها تغییر = commit مشخص 817f208 (فقط فایل CI).
+
+Stage Summary:
+- قبول: بسته‌ها (SHA-256 زنجیرهٔ کامل + محتوا تمیز + installer کنار EXE)، تست‌های امنیتی auth/WS واقعی سبز، pytest 104/104، فایل CI آمادهٔ معتبر.
+- رد/مسدود: push فایل workflow به‌دلیل نبود مجوز Workflows روی PAT فعلی — نیازمند افزودن «Workflows: Read and write» به توکن یا افزودن فایل از وب‌گیتهاب؛ پس از آن git push (کامیت 817f208 آماده است) و بررسی Run واقعی.
+- آزموده‌نشدهٔ صادقانه: اجرای واقعی EXE روی ویندوز (نیازمند CI فعال)، نصب واقعی systemd/UFW/SSH روی اوبونتوی تمیز (سندباکس بدون systemd/root — VM واقعی لازم است).
+- پروژه «کاملاً آمادهٔ انتشار» اعلام نمی‌شود تا دو مورد بالا واقعی تأیید شوند.
+
+---
+Task ID: 15
+Agent: Z.ai Code (Main Orchestrator)
+Task: رفع باگ v0.3.1 — اجرای EXE روی ویندوز، به‌جای UI، JSON {"ok":true,"service":"hem-agent","version":"0.3.1"} نمایش می‌داد
+
+Work Log:
+- راستی‌آزمایی ZIP منتشرشدهٔ v0.3.1 (دانلود از GitHub Release، sha=6e97f838… مطابق دارایی): ui/index.html (58KB، lang=fa) و installer/ و EXE همه موجودند — بسته سالم؛ باگ در حل مسیر داخل EXE است، نه محتوای بسته.
+- ریشه‌یابی: index.ts تشخیص باندل را با startsWith("/$bunfs") انجام می‌داد — فقط مسیر پوزیکس. روی ویندوز import.meta.dir = C:\$bunfs\root (حرف درایو + بک‌اسلش) → تشخیص fail → exeDir = fs مجازی → ui/ پیدا نشد → fallback api.ts: app.get("/") JSON مبهم. روی لینوکس مسیر /$bunfs درست تشخیص داده می‌شد → به همین دلیل راستی‌آزمایی زندهٔ لینوکسی build-windows.sh سبز بود و باگ فقط روی ویندوز ظاهر شد.
+- اصلاح: src/exepath.ts جدید (inCompiledBinary = عضویت «$bunfs» در مسیر + programDir = dirname(execPath) با dirname هم‌خوان سبک مسیر)؛ index.ts (لاگ صریح UI NOT FOUND + مسیر + ui: served/MISSING با مسیر)؛ api.ts (حذف JSON مبهم GET / → صفحهٔ 503 text/html خطای فارسی روشن با علت/مسیر/راه‌حل + ثبت لاگ سرور؛ ترتیب middlewareها دست‌نخورده)؛ config.ts (همان تشخیص برای کاندید dev نصب‌کننده).
+- تست‌های رگرسیون: test/exepath.test.ts (۱۴ — قفل سناریوی C:\$bunfs بدون ویندوز؛ با منطق قدیمی fail می‌شود)، test/ui-serving.test.ts (۱۰ — UI=200 text/html واقعی / غایب=503 صفحهٔ خطا نه JSON / health=JSON در هر دو حالت / تبادل توکن→HTML)، test/packaged.test.ts (۶ — کامپایل واقعی bun build --compile + چیدمان بسته + اجرا + اثبات GET / = text/html و health = JSON و لاگ ui: served بدون $bunfs).
+- build-windows.sh: دو چک زندهٔ جدید (GET / → Content-Type: text/html؛ بدنه هرگز JSON سلامت). CI: سه فایل رگرسیون به هر دو job؛ در job ویندوز بعد از Build UI (استفاده از UI واقعی)؛ چک Content-Type صریح در مرحلهٔ اجرای واقعی EXE.
+- نسخه 0.3.2 همه‌جا (root/agent package.json، AGENT_VERSION، __init__.py، pyproject، README-FA) + CHANGELOG صادقانه.
+- بازسازی محیط تست سندباکس (پاک‌شده توسط snapshot): headscale v0.29.5 واقعی (binary sha e979d27f…) + config نمونهٔ رسمی با مسیرهای hs-test + seed کاربر id=1 + سرور SSH آزمایشی 2222.
+- اجراها: agent 141/141 (۱۱۱ قبلی + ۳۰ جدید)؛ pytest 104/104؛ lint 0؛ tsc ریشه و agent 0؛ yaml CI معتبر (۲ job، ۱۰+۱۲ step).
+- build رسمی: tar.gz v0.3.2 (sha 1d8ef86a…) + HeadscaleEasyManager-v0.3.2-win64.zip (sha 7c0ef911… — جفت با .sha256، sha256sum -c OK)؛ راستی‌آزمایی زندهٔ build-windows.sh: ۲۶/۲۶ [OK] از جمله دو چک جدید ضد این باگ؛ ZIP: ۱۵۴ فایل + exe (100,510,208B)، ui/index.html موجود، صفر محتوای ممنوعه.
+- push: کامیت‌های fix و نسخه (بدون .github) → موفق؛ کامیت فایل workflow → مجدداً رد شد (PAT بدون مجوز Workflows — «refusing to allow a Personal Access Token to create or update workflow … without workflow scope»)؛ پروب با شاخهٔ موقت هم همین خطا را داد؛ workflows روی remote = 0. گزارش صادقانه: اجرای واقعی روی خودِ ویندوز همچنان «آزموده‌نشده» تا فعال‌سازی CI (افزودن مجوز Workflows به توکن یا افزودن فایل از وب) یا ویندوز واقعی.
+
+Stage Summary:
+- باگ UI ویندوزی ریشه‌یابی و رفع شد (عضویت $bunfs به‌جای پیشوند پوزیکس)؛ پاسخ مبهم JSON با صفحهٔ خطای روشن جایگزین شد؛ ۳۰ تست رگرسیون جدید؛ همهٔ گیت‌های محلی سبز (141 agent + 104 pytest + lint/tsc).
+- بستهٔ v0.3.2 ساخته و راستی‌آزمایی شد (zip sha 7c0ef911…، tar.gz sha 1d8ef86a…، ۲۶ چک زنده)؛ انتشار GitHub بر «اثبات اجرای موفق UI روی ویندوز» گره خورده و انجام نشد.
+- مسدود/صادقانه: push فایل CI به‌دلیل مجوز توکن رد می‌شود (مجدداً امتحان شد)؛ نسخه «آمادهٔ انتشار» اعلام نمی‌شود تا CI ویندوزی واقعاً اجرا شود.
