@@ -6,7 +6,7 @@ import { AppProviders } from "@/components/console/providers";
 export const metadata: Metadata = {
   title: "Headscale Easy Manager — کنسول مدیریت شبکهٔ خصوصی",
   description:
-    "کنسول واقعی مدیریت Headscale: اتصال امن SSH به سرور شما، کاوش صادقانهٔ سیستم، مدیریت کاربران/دستگاه‌ها/کلیدها، نصب خودکار و ۱۵ فصل آموزش فارسی.",
+    "کنسول واقعی مدیریت Headscale: اتصال امن SSH به سرور شما، کاوش صادقانهٔ سیستم، مدیریت کاربران/دستگاه‌ها/کلیدها، نصب خودکار و ۱۷ فصل آموزش فارسی.",
   keywords: [
     "Headscale",
     "Tailscale",

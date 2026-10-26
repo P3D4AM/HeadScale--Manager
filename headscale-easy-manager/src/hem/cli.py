@@ -187,7 +187,7 @@ def build_parser() -> argparse.ArgumentParser:
     p.set_defaults(handler=cmd_cameras)
 
     # learn
-    p = sub.add_parser("learn", help="مرکز آموزش فارسی (۱۴ فصل)")
+    p = sub.add_parser("learn", help="مرکز آموزش فارسی (۱۷ فصل)")
     p.add_argument("topic", nargs="?", default=None, help="شماره فصل یا list")
     p.set_defaults(handler=cmd_learn)
 

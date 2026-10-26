@@ -221,4 +221,4 @@ powershell -ExecutionPolicy Bypass -File .\uninstall.ps1
 - ویزارد نصب ۵ مرحله‌ای همیشه صادقانه گزارش می‌دهد (SUDO_REQUIRED، `pending_verification`، `partial_failure` و…) — موفقیت جعلی وجود ندارد.
 - همهٔ بخش‌های مدیریت با دادهٔ واقعی کار می‌کنند؛ کنسول فقط دستورهای مجاز را اجرا می‌کند؛ حذف برنامه هیچ چیزی روی سرور تغییر نمی‌دهد.
 
-[فصل قبلی: راهنمای سریع شروع](14-rahnamaye-sari.md)
+[فصل قبلی: راهنمای سریع شروع](14-rahnamaye-sari.md) | [فصل بعدی: آموزش کامل کار با پنل مدیریت](16-amoozesh-panel.md)

@@ -505,7 +505,7 @@ jobs:
         working-directory: mini-services/hem-agent
         run: bun run typecheck
 
-      - name: Generate build-time docs (15 chapters)
+      - name: Generate build-time docs (17 chapters)
         run: bun run docs:generate
 
       - name: Build UI (Next.js static export)

@@ -1,6 +1,7 @@
 'use client'
 
 import {
+  AppWindow,
   BookOpen,
   Building2,
   Cctv,
@@ -8,7 +9,9 @@ import {
   Globe,
   GraduationCap,
   Languages,
+  LayoutDashboard,
   Lock,
+  MonitorSmartphone,
   Network,
   Rocket,
   Shield,
@@ -35,6 +38,9 @@ export const CHAPTER_ICONS: Record<string, LucideIcon> = {
   GraduationCap,
   Cctv,
   Zap,
+  AppWindow,
+  LayoutDashboard,
+  MonitorSmartphone,
 }
 
 export function chapterIcon(name: string): LucideIcon {

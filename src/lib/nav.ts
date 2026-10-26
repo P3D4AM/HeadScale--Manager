@@ -2,6 +2,8 @@
 
 import { useSyncExternalStore } from 'react'
 
+import { DOCS } from '@/generated/docs-content'
+
 /**
  * نقشهٔ مسیرهای کنسول مدیریت (hash-based، بدون سرور).
  * ساختار: section (+ chapter برای آموزش + tab برای راهنما)
@@ -27,7 +29,7 @@ export type HelpTab = 'troubleshoot' | 'cli' | 'cameras' | 'install'
 
 export interface Route {
   section: SectionId
-  /** شمارهٔ فصل آموزش (۱ تا ۱۴) — فقط برای learn */
+  /** شمارهٔ فصل آموزش (۱ تا تعداد فصل‌های موجود) — فقط برای learn */
   chapter: number | null
   /** تب داخل راهنما — فقط برای help */
   tab: HelpTab | null
@@ -66,7 +68,8 @@ export function parseHash(hash: string): Route {
       const n = sub ? Number.parseInt(sub, 10) : NaN
       return {
         section: 'learn',
-        chapter: Number.isFinite(n) && n >= 1 && n <= 14 ? n : null,
+        // سقف فصل به‌جای عدد ثابت، از تعداد واقعی فصل‌های تولیدشده می‌آید
+        chapter: Number.isFinite(n) && n >= 1 && n <= DOCS.length ? n : null,
         tab: null,
       }
     }

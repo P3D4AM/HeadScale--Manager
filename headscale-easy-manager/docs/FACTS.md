@@ -338,6 +338,8 @@ hsctl uninstall [--purge-data] [--yes]
 | `13-dorbin-madarbaste.md` | فصل سیزدهم: دوربین‌های مداربسته و Dahua |
 | `14-rahnamaye-sari.md` | راهنمای سریع شروع |
 | `15-barnameh-windows.md` | فصل پانزدهم: برنامهٔ ویندوزی (مدیریت با رابط گرافیکی) |
+| `16-amoozesh-panel.md` | فصل شانزدهم: آموزش کامل کار با پنل مدیریت |
+| `17-ettesal-windows-tailscale.md` | فصل هفدهم: اتصال ویندوز به سرور Headscale (کلاینت Tailscale) |
 
 Frontmatter الزامی هر فصل:
 ```yaml

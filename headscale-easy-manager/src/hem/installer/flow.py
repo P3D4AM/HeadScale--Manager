@@ -853,7 +853,7 @@ class InstallFlow:
         print(f"  ۲) برای اتصال بدون مرورگر، کلید بسازید: hsctl preauth create {ans.first_user}")
         print("  ۳) برای دسترسی به شبکه دفتر: فصل ۶ (hsctl learn 6)")
         print("  ۴) وضعیت کلی: hsctl status   |   عیب‌یابی: hsctl doctor")
-        print("  ۵) آموزش کامل: hsctl learn list  (۱۴ فصل فارسی)")
+        print("  ۵) آموزش کامل: hsctl learn list  (۱۷ فصل فارسی)")
         return "موفق باشید!"
 
     # ├── ابزارهای کمکی -----------------------------------------------------------

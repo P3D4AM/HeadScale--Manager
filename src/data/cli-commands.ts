@@ -224,7 +224,7 @@ export const CLI_COMMANDS: CliCommand[] = [
     name: 'learn',
     command: 'hsctl learn [list | <شماره فصل>]',
     description:
-      'مرکز آموزش فارسی داخل ترمینال — فهرست ۱۵ فصل یا نمایش مستقیم یک فصل.',
+      'مرکز آموزش فارسی داخل ترمینال — فهرست ۱۷ فصل یا نمایش مستقیم یک فصل.',
     example: 'hsctl learn 6',
     risk: 'safe',
   },
