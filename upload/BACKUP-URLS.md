@@ -125,3 +125,11 @@ de9eb726d8d11ef8be6ae48fcac1207f6a86cfb28d856edf210a3bf7e6bbf924  headscale-easy
 ```
 - md5 زیپ آپلودشده با پاسخ سرور gofile تطبیق داده شد (f6df09b1…) — آپلود سالم است.
 - صادقانه: انتشار GitHub Release این نسخه انجام نشد (توکن push این سندباکس «Invalid username or token» می‌دهد — به‌احتمال زیاد هم‌زمان با ارسال مجدد توکن به جلسهٔ موازی، توکن قدیمی regenerate شده). پس از رفع توکن، همین کامیت (ec81a08) باید push و از همان، Release ساخته شود.
+
+## Release v0.3.2-beta.5 (2026-10-26) — پنل: نام/برچسب/مسیر + نصب آفلاین Tailscale
+
+- **پشتیبان بادوام اصلی: GitHub Release v0.3.2-beta.5** (هر ۴ دارایی پس از آپلود دوباره دانلود و sha256 بایت‌به‌بایت تطبیق شد):
+  - بستهٔ سرور: `headscale-easy-manager-v0.3.2-beta.5.tar.gz` — sha256 = `898b0d313c7ee59a7c3646ae30e19d4479dea15772cae5ac8c12f79552e815f2`
+  - بستهٔ ویندوزی (شامل Tailscale MSI رسمی 1.104.2 برای نصب آفلاین): `HeadscaleEasyManager-v0.3.2-beta.5-win64.zip` — sha256 = `2c26e8b85a92caf6165cdc2b21e32f79e7e98ca55f0f4a27b06950c8d26bc5c4`
+  - نشانی: https://github.com/P3D4AM/HeadScale-Manager/releases/tag/v0.3.2-beta.5
+- کامیت: 5a68b0e (از develop؛ remote main دست‌نخورده: 7318212)
