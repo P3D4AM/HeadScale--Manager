@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 import json
+import re
 import shutil
 from dataclasses import dataclass, field
 
@@ -265,25 +266,79 @@ def _check_disk() -> Check:
     return check
 
 
+# پیام‌های نمایشی خودِ journalctl (مانند «-- No entries --»، «-- Journal begins
+# at ... --» و «-- Reboot --») رکورد لاگ نیستند؛ رکورد واقعی با مهر زمانی شروع
+# می‌شود و هرگز با «--» شروع نمی‌شود.
+_JOURNAL_NOTICE_RE = re.compile(r"^--.*--$")
+
+
+def _journal_error_records(res) -> list:
+    """استخراج رکوردهای خطای واقعی از خروجی journalctl.
+
+    خطوط خالی و پیام‌های اطلاعی journalctl حذف می‌شوند — این پیام‌ها رکورد
+    نیستند و نباید خطا شمرده شوند (رفع هشدار کاذب «-- No entries --»).
+    """
+    records = []
+    for line in res.stdout.splitlines():
+        text = line.strip()
+        if not text or _JOURNAL_NOTICE_RE.match(text):
+            continue
+        records.append(text)
+    return records
+
+
 def _check_logs() -> Check:
-    check = Check("logs", "خطاهای اخیر سرویس؟", how_checked="journalctl -u headscale -p err -n 50")
+    """چک لاگ — چهار حالت از هم تفکیک‌شده:
+
+    ۱) اجرای موفق و نبود رکورد خطا (خروجی خالی یا فقط پیام نمایشی
+       «-- No entries --») → وضعیت ok؛ هرگز «-- No entries --» خطا شمرده
+       نمی‌شود.
+    ۲) رکورد خطای واقعی → هشدار (warn) با شمارش درست و نمونهٔ خطا.
+    ۳) شکست اجرای خود دستور (نبود journalctl، تایم‌اوت) → هشدار با بیان
+       صریحِ «بررسی لاگ انجام نشد» — متمایز از «خطایی نیست».
+    ۴) کد خروج غیرصفر (نبود مجوز، خرابی journal و…) → مانند حالت ۳؛
+       هرگز نبود خطا قطعی اعلام نمی‌شود.
+    """
+    check = Check(
+        "logs", "خطاهای اخیر سرویس؟",
+        how_checked="journalctl -u headscale -p err -n 50 --quiet",
+    )
+    manual_cmd = "journalctl -u headscale -p err -n 50 --no-pager"
     try:
         res = run(
-            ["journalctl", "-u", C.HEADSCALE_UNIT, "-p", "err", "-n", "50", "--no-pager"],
+            ["journalctl", "-u", C.HEADSCALE_UNIT, "-p", "err", "-n", "50",
+             "--no-pager", "--quiet"],
             check=False, timeout=60,
         )
-        lines = [line for line in res.stdout.splitlines() if line.strip()]
-    except HemExecError:
-        lines = []
-    if not lines:
+    except HemExecError as exc:
+        check.status = "warn"
+        check.problem = "بررسی لاگ انجام نشد؛ نبود خطا قطعی نیست."
+        check.cause = f"اجرای journalctl ناموفق بود: {exc}"
+        check.fix = f"sudo {manual_cmd}"
+        return check
+    if res.returncode != 0:
+        check.status = "warn"
+        check.problem = "بررسی لاگ انجام نشد؛ نبود خطا قطعی نیست."
+        detail = [
+            line for line in (res.stderr or res.stdout or "").splitlines()
+            if line.strip()
+        ]
+        check.cause = (
+            "journalctl با کد خروج غیرصفر تمام شد"
+            + (f": {detail[-1][:160]}" if detail else ".")
+        )
+        check.fix = f"sudo {manual_cmd}"
+        return check
+    records = _journal_error_records(res)
+    if not records:
         check.status = "ok"
-        check.problem = "خطای مهمی در ۵۰ رکورد آخر ثبت نشده است."
+        check.problem = "خطای ثبت‌شده‌ای در بازهٔ بررسی‌شده (۵۰ رکورد آخر، اولویت err) پیدا نشد."
         return check
     check.status = "warn"
-    check.problem = f"{len(lines)} رکورد خطا در لاگ اخیر دیده شد. نمونه:"
+    check.problem = f"{len(records)} رکورد خطا در لاگ اخیر دیده شد. نمونه:"
     check.cause = "برای علت دقیق، متن کامل را ببینید."
     check.fix = "sudo hsctl logs --lines 100"
-    check.problem += "\n         " + lines[-1][:160]
+    check.problem += "\n         " + records[-1][:160]
     return check
 
 
