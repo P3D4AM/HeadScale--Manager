@@ -14,8 +14,13 @@
 #     ├─ installer/                  installer repo — bundled next to the exe (v0.3.1 §1);
 #     │                              without it, the install wizard stops with a clear error.
 #     ├─ ui/                         Persian web UI (static; the exe serves it)
+#     ├─ vendor/tailscale/           OFFICIAL Tailscale MSI (pinned version + verified
+#     │                              SHA-256) so Tailscale can be installed LOCALLY on
+#     │                              Windows without winget/internet — run
+#     │                              install-tailscale.ps1 from the package folder.
 #     ├─ README-WINDOWS-FA.txt       quick-start guide (Persian)
 #     ├─ install.ps1                 install (LOCALAPPDATA + shortcuts, no Administrator)
+#     ├─ install-tailscale.ps1       OFFLINE Tailscale install from vendor/ (asks UAC once)
 #     └─ uninstall.ps1               uninstall
 #   linux-verify/hem-manager         Linux binary from the same source — "actually
 #                                    run" and verified (below); reason: the Windows
@@ -77,7 +82,9 @@ command -v python3 >/dev/null 2>&1 || fail "python3 is not on PATH — the Windo
 [ -f "$OUTER_DIR/headscale-easy-manager/install.sh" ] || fail "install.sh is not in the headscale-easy-manager working tree — the committed tree (HEAD) must contain the Python repo (fold v0.3.1)."
 [ -f "$SCRIPT_DIR/templates/install.ps1" ]        || fail "template templates/install.ps1 is missing."
 [ -f "$SCRIPT_DIR/templates/uninstall.ps1" ]      || fail "template templates/uninstall.ps1 is missing."
+[ -f "$SCRIPT_DIR/templates/install-tailscale.ps1" ] || fail "template templates/install-tailscale.ps1 is missing."
 [ -f "$SCRIPT_DIR/templates/README-WINDOWS-FA.txt" ] || fail "template templates/README-WINDOWS-FA.txt is missing."
+[ -f "$SCRIPT_DIR/fetch-tailscale-msi.sh" ]        || fail "fetch-tailscale-msi.sh is missing — the offline Tailscale bundle cannot be verified without it."
 log "version: $VERSION | agent: $AGENT_DIR | outer project: $OUTER_DIR"
 
 # ----------------------------------------------------------------------------
@@ -229,21 +236,38 @@ bun build --compile --target=bun-windows-x64 "$AGENT_DIR/index.ts" \
 # BOM" + "LF"; Windows PowerShell 5.1 read it with the ANSI code page and hit
 # the Parser bug.
 # ----------------------------------------------------------------------------
-log "Staging Windows text files from templates (install.ps1 / uninstall.ps1 / README) …"
-cp "$SCRIPT_DIR/templates/install.ps1"   "$STAGE/install.ps1"
-cp "$SCRIPT_DIR/templates/uninstall.ps1" "$STAGE/uninstall.ps1"
+log "Staging Windows text files from templates (install.ps1 / uninstall.ps1 / install-tailscale.ps1 / README) …"
+cp "$SCRIPT_DIR/templates/install.ps1"           "$STAGE/install.ps1"
+cp "$SCRIPT_DIR/templates/uninstall.ps1"         "$STAGE/uninstall.ps1"
+cp "$SCRIPT_DIR/templates/install-tailscale.ps1" "$STAGE/install-tailscale.ps1"
 # @VERSION@ → $VERSION — this is the only substitution; every other byte is untouched.
 # (Versions never contain & or \; if they ever do, escaping must be added here.)
 sed "s/@VERSION@/$VERSION/g" "$SCRIPT_DIR/templates/README-WINDOWS-FA.txt" > "$STAGE/README-WINDOWS-FA.txt"
-# Byte guard — both templates and outputs
+# Byte guard — all templates and outputs
 guard_windows_text "$SCRIPT_DIR/templates/install.ps1" "$SCRIPT_DIR/templates/uninstall.ps1" \
-  "$STAGE/install.ps1" "$STAGE/uninstall.ps1" "$STAGE/README-WINDOWS-FA.txt" \
+  "$SCRIPT_DIR/templates/install-tailscale.ps1" "$SCRIPT_DIR/templates/README-WINDOWS-FA.txt" \
+  "$STAGE/install.ps1" "$STAGE/uninstall.ps1" "$STAGE/install-tailscale.ps1" "$STAGE/README-WINDOWS-FA.txt" \
   || fail "Windows text-file guard rejected the files — contract: UTF-8 BOM + CRLF only + no U+2018..U+201D (review the templates)."
 if grep -q "@VERSION@" "$STAGE/README-WINDOWS-FA.txt"; then
   fail "output README still contains @VERSION@ — the version substitution did not happen."
 fi
 grep -q "نسخهٔ $VERSION" "$STAGE/README-WINDOWS-FA.txt" || fail "output README lacks the Persian version marker for $VERSION."
-parse_ps1_guard "$STAGE/install.ps1" "$STAGE/uninstall.ps1"
+parse_ps1_guard "$STAGE/install.ps1" "$STAGE/uninstall.ps1" "$STAGE/install-tailscale.ps1"
+
+# ----------------------------------------------------------------------------
+# 2-c) OFFLINE Tailscale bundle — the official MSI, pinned + digest-verified
+# ----------------------------------------------------------------------------
+# User directive: "bring the Tailscale package INSIDE the Headscale Manager
+# package so Windows can install it locally". The MSI comes from the official
+# pkgs.tailscale.com stable channel with a pinned SHA-256; a download that does
+# not match fails the build (fetch-tailscale-msi.sh). install-tailscale.ps1
+# (staged above) installs it offline with one UAC prompt.
+# ----------------------------------------------------------------------------
+log "Bundling the official Tailscale MSI for OFFLINE Windows install …"
+TS_MSI_PATH="$(bash "$SCRIPT_DIR/fetch-tailscale-msi.sh" "$STAGE/vendor/tailscale")" \
+  || fail "fetch-tailscale-msi.sh failed — the Windows package is never built without a verified Tailscale installer."
+[ -f "$TS_MSI_PATH" ] || fail "fetch-tailscale-msi.sh did not produce the MSI."
+log "Tailscale MSI staged: $TS_MSI_PATH ($(du -h "$TS_MSI_PATH" | cut -f1))"
 
 # ----------------------------------------------------------------------------
 # 3) Linux binary from the same source + full live verification
@@ -496,15 +520,29 @@ zip_has "hem-manager/install.ps1" \
   || fail "zip is missing install.ps1."
 zip_has "hem-manager/uninstall.ps1" \
   || fail "zip is missing uninstall.ps1."
+zip_has "hem-manager/install-tailscale.ps1" \
+  || fail "zip is missing install-tailscale.ps1 — the offline Tailscale installer script is part of the package."
+TS_MSI_ZIP_NAME="$(basename "${TS_MSI_PATH:-}")"
+[ -n "$TS_MSI_ZIP_NAME" ] || fail "TS_MSI_PATH was not set — the MSI bundling step did not run."
+zip_has "hem-manager/vendor/tailscale/$TS_MSI_ZIP_NAME" \
+  || fail "zip is missing vendor/tailscale/$TS_MSI_ZIP_NAME — the OFFICIAL Tailscale MSI must ship inside the package (user directive: local/offline install)."
 zip_has "hem-manager/README-WINDOWS-FA.txt" \
   || fail "zip is missing README-WINDOWS-FA.txt."
 # and the bytes of the text files inside the zip must satisfy the same contract (BOM+CRLF).
 rm -rf "$DIST/zip-guard" && mkdir -p "$DIST/zip-guard"
-unzip -q "$ZIP" "hem-manager/install.ps1" "hem-manager/uninstall.ps1" "hem-manager/README-WINDOWS-FA.txt" -d "$DIST/zip-guard"
-guard_windows_text "$DIST/zip-guard/hem-manager/install.ps1" "$DIST/zip-guard/hem-manager/uninstall.ps1" "$DIST/zip-guard/hem-manager/README-WINDOWS-FA.txt" \
+unzip -q "$ZIP" "hem-manager/install.ps1" "hem-manager/uninstall.ps1" "hem-manager/install-tailscale.ps1" "hem-manager/README-WINDOWS-FA.txt" -d "$DIST/zip-guard"
+guard_windows_text "$DIST/zip-guard/hem-manager/install.ps1" "$DIST/zip-guard/hem-manager/uninstall.ps1" "$DIST/zip-guard/hem-manager/install-tailscale.ps1" "$DIST/zip-guard/hem-manager/README-WINDOWS-FA.txt" \
   || fail "text files inside the zip violate the BOM+CRLF contract."
 grep -q "@VERSION@" "$DIST/zip-guard/hem-manager/README-WINDOWS-FA.txt" && fail "README inside the zip still contains @VERSION@."
 grep -q "نسخهٔ $VERSION" "$DIST/zip-guard/hem-manager/README-WINDOWS-FA.txt" || fail "README inside the zip lacks the Persian version marker for $VERSION."
+# the MSI inside the zip must be byte-identical to the pinned official one
+# (digest re-verified — a corrupted or swapped zip is never shipped silently)
+unzip -q "$ZIP" "hem-manager/vendor/tailscale/$TS_MSI_ZIP_NAME" -d "$DIST/zip-guard"
+TS_MSI_PINNED_SHA="$(grep -m1 '^TS_MSI_SHA256=' "$SCRIPT_DIR/fetch-tailscale-msi.sh" | cut -d'"' -f2)"
+TS_MSI_ZIP_SHA="$(sha256sum "$DIST/zip-guard/hem-manager/vendor/tailscale/$TS_MSI_ZIP_NAME" | cut -d' ' -f1)"
+[ "$TS_MSI_ZIP_SHA" = "$TS_MSI_PINNED_SHA" ] \
+  || fail "the Tailscale MSI inside the zip does not match the pinned SHA-256 — refusing to ship."
+log "verified inside the zip: install-tailscale.ps1 (BOM+CRLF) + $TS_MSI_ZIP_NAME (SHA-256 = pinned)."
 rm -rf "$DIST/zip-guard"
 echo
 

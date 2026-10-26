@@ -46,20 +46,20 @@ function bytes(p: string): Buffer {
 }
 
 test("T1 templates exist", () => {
-  for (const f of ["install.ps1", "uninstall.ps1", "README-WINDOWS-FA.txt"]) {
+  for (const f of ["install.ps1", "uninstall.ps1", "install-tailscale.ps1", "README-WINDOWS-FA.txt"]) {
     expect(fs.existsSync(path.join(TPL, f))).toBe(true);
   }
 });
 
 test("T2 have UTF-8 BOM (precondition for correct reading by Windows PowerShell 5.1)", () => {
-  for (const f of ["install.ps1", "uninstall.ps1", "README-WINDOWS-FA.txt"]) {
+  for (const f of ["install.ps1", "uninstall.ps1", "install-tailscale.ps1", "README-WINDOWS-FA.txt"]) {
     const b = bytes(path.join(TPL, f));
     expect(b.subarray(0, 3).equals(BOM)).toBe(true);
   }
 });
 
 test("T3 CRLF only — no lone LF/CR and the file ends with CRLF", () => {
-  for (const f of ["install.ps1", "uninstall.ps1", "README-WINDOWS-FA.txt"]) {
+  for (const f of ["install.ps1", "uninstall.ps1", "install-tailscale.ps1", "README-WINDOWS-FA.txt"]) {
     const body = bytes(path.join(TPL, f)).subarray(3);
     const stripped = Buffer.from(body); // mutable copy
     // counting by substitution: lone lf = total LF minus CRLF
@@ -79,7 +79,7 @@ test("T3 CRLF only — no lone LF/CR and the file ends with CRLF", () => {
 });
 
 test("T4 no Unicode quote characters (U+2018..U+201E) — the Parser killer", () => {
-  for (const f of ["install.ps1", "uninstall.ps1", "README-WINDOWS-FA.txt"]) {
+  for (const f of ["install.ps1", "uninstall.ps1", "install-tailscale.ps1", "README-WINDOWS-FA.txt"]) {
     const text = bytes(path.join(TPL, f)).toString("utf8");
     for (const ch of text) {
       const c = ch.codePointAt(0) ?? 0;
@@ -104,13 +104,21 @@ test("T5 key English installer strings intact (install/uninstall messages — no
   const uninstall = bytes(path.join(TPL, "uninstall.ps1")).toString("utf8");
   expect(uninstall).toContain("Uninstalled.");
   expect(uninstall).toContain("changes nothing on your server");
+  // v0.3.2-beta.5: the OFFLINE Tailscale installer (bundled MSI) — key strings
+  const ts = bytes(path.join(TPL, "install-tailscale.ps1")).toString("utf8");
+  expect(ts).toContain("OFFLINE Tailscale installer");
+  expect(ts).toContain("msiexec.exe");
+  expect(ts).toContain("vendor\\tailscale");
+  expect(ts).toContain("Get-Service Tailscale");
+  expect(ts).toContain("-Interactive");
+  expect(ts).toContain("login --login-server");
 });
 
 test("T5b installer scripts are English-only — zero Arabic-script characters (user directive v0.3.2-beta.3)", () => {
   // Terminal output must be English-only per the user's directive. This also
   // eliminates the entire mojibake/RTL-rendering risk class on Windows
   // consoles (the root cause of the original Parser bug).
-  for (const f of ["install.ps1", "uninstall.ps1"]) {
+  for (const f of ["install.ps1", "uninstall.ps1", "install-tailscale.ps1"]) {
     // subarray(3) skips the UTF-8 BOM (U+FEFF would false-positive in the
     // Arabic presentation-forms range below).
     const text = bytes(path.join(TPL, f)).subarray(3).toString("utf8");
@@ -127,13 +135,17 @@ test("T5b installer scripts are English-only — zero Arabic-script characters (
   }
 });
 
-test("T6 README: @VERSION@ placeholder + troubleshooting section + diagnostic log path", () => {
+test("T6 README: @VERSION@ placeholder + troubleshooting section + diagnostic log path + offline Tailscale section", () => {
   const readme = bytes(path.join(TPL, "README-WINDOWS-FA.txt")).toString("utf8");
   expect(readme).toContain("@VERSION@"); // replaced by build-windows.sh
   expect(readme).toContain("۵) عیب‌یابی");
   expect(readme).toContain("$LASTEXITCODE");
   expect(readme).toContain("%USERPROFILE%\\.hem-agent\\logs\\hem-agent.log");
   expect(readme).toContain("EADDRINUSE");
+  // v0.3.2-beta.5: the offline Tailscale install section must be discoverable
+  expect(readme).toContain("۶) نصب آفلاین Tailscale");
+  expect(readme).toContain("install-tailscale.ps1");
+  expect(readme).toContain("vendor\\tailscale");
 });
 
 // ---------------------------------------------------------------------------
@@ -153,7 +165,7 @@ const hasPwsh = (() => {
 
 const psParseScript = `
 $bad = 0
-foreach ($f in @("install.ps1", "uninstall.ps1")) {
+foreach ($f in @("install.ps1", "uninstall.ps1", "install-tailscale.ps1")) {
   $p = Join-Path $env:PS1TPL $f
   $errs = $null; $tok = $null
   $null = [System.Management.Automation.Language.Parser]::ParseFile($p, [ref]$tok, [ref]$errs)

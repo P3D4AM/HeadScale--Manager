@@ -4,7 +4,7 @@ import * as path from "node:path";
 import { inCompiledBinary } from "./exepath";
 
 /** Agent version — kept in sync with package.json (v0.3.2: Windows UI bug fix) */
-export const AGENT_VERSION = "0.3.2-beta.4"; // development pre-release (develop) — stable branch: main
+export const AGENT_VERSION = "0.3.2-beta.5"; // development pre-release (develop) — stable branch: main
 
 /** Bind address (loopback by default — network access must be a conscious, token-protected choice) */
 export function agentHost(): string {

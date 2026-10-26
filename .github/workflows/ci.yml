@@ -95,8 +95,13 @@ jobs:
           cp -a out/. stage/ui/
           git archive HEAD:headscale-easy-manager | tar -x -C stage/installer
           test -f stage/installer/install.sh
-          cp mini-services/hem-agent/packaging/templates/install.ps1   stage/install.ps1
-          cp mini-services/hem-agent/packaging/templates/uninstall.ps1 stage/uninstall.ps1
+          cp mini-services/hem-agent/packaging/templates/install.ps1           stage/install.ps1
+          cp mini-services/hem-agent/packaging/templates/uninstall.ps1         stage/uninstall.ps1
+          cp mini-services/hem-agent/packaging/templates/install-tailscale.ps1 stage/install-tailscale.ps1
+          # OFFLINE Tailscale bundle (user directive): the official MSI, pinned
+          # version + SHA-256 — installed locally via install-tailscale.ps1.
+          bash mini-services/hem-agent/packaging/fetch-tailscale-msi.sh stage/vendor/tailscale
+          test -f "stage/vendor/tailscale/tailscale-setup-1.104.2-amd64.msi"
           bun build --compile --target=bun-windows-x64 \
             mini-services/hem-agent/index.ts --outfile stage/hem-manager.exe
           test -f stage/hem-manager.exe
@@ -356,8 +361,10 @@ jobs:
           # --- 1) Parse with the real PowerShell 5.1 parser ---------------
           foreach ($f in @('mini-services\hem-agent\packaging\templates\install.ps1',
                            'mini-services\hem-agent\packaging\templates\uninstall.ps1',
+                           'mini-services\hem-agent\packaging\templates\install-tailscale.ps1',
                            'stage\install.ps1',
-                           'stage\uninstall.ps1')) {
+                           'stage\uninstall.ps1',
+                           'stage\install-tailscale.ps1')) {
             $errs = $null; $tok = $null
             $ast = [System.Management.Automation.Language.Parser]::ParseFile((Resolve-Path $f), [ref]$tok, [ref]$errs)
             if ($errs.Count -gt 0) {
@@ -393,6 +400,13 @@ jobs:
             }
             Write-Host ("STRING OK: {0} - product-name strings intact in AST ({1} hits)" -f $f, $hits.Count)
           }
+
+          # --- 1-b) OFFLINE Tailscale bundle must be staged (user directive) --
+          $msi = Get-ChildItem -Path stage\vendor\tailscale -Filter 'tailscale-setup-*-amd64.msi' -ErrorAction Stop |
+            Select-Object -First 1
+          if (-not $msi) { Write-Host 'MSI FAIL: no bundled Tailscale MSI in stage/vendor/tailscale'; exit 1 }
+          if ($msi.Length -lt 10MB) { Write-Host ("MSI FAIL: suspicious size {0} bytes" -f $msi.Length); exit 1 }
+          Write-Host ("MSI OK: {0} ({1:N1} MB)" -f $msi.Name, ($msi.Length / 1MB))
 
           # --- 2) Real install (LOCALAPPDATA + shortcuts, no admin) -------
           # Child powershell.exe -File: the exact way a user runs it, and the
