@@ -126,6 +126,9 @@ function NodesManager() {
     [tagValue]
   )
   const tagsValid = tagList.every((t) => TAG_PATTERN.test(t))
+  // سرور واقعی 0.29.5 اجازه نمی‌دهد همهٔ برچسب‌های یک دستگاه هم‌زمان پاک شوند
+  // («cannot remove all tags» — با باینری واقعی تست شد)؛ فهرست خالی معنا ندارد.
+  const tagsSubmittable = tagList.length > 0 && tagsValid
   const tagMut = useMutation({
     mutationFn: async () => {
       if (!sid || !tagTarget) throw new AgentError('NOT_CONNECTED', 'نشست فعالی وجود ندارد.')
@@ -133,9 +136,7 @@ function NodesManager() {
     },
     onSuccess: (res) => {
       toast.success(
-        res.data.tags.length > 0
-          ? `برچسب‌های دستگاه #${res.data.id.toLocaleString('fa-IR')} به «${res.data.tags.join('، ')}» تنظیم شد.`
-          : `همهٔ برچسب‌های دستگاه #${res.data.id.toLocaleString('fa-IR')} برداشته شد.`
+        `برچسب‌های دستگاه #${res.data.id.toLocaleString('fa-IR')} به «${res.data.tags.join('، ')}» تنظیم شد.`
       )
       setTagTarget(null)
       invalidate()
@@ -283,9 +284,29 @@ function NodesManager() {
                           {n.id}
                         </TableCell>
                         <TableCell>
-                          <span className="font-bold text-foreground" dir="ltr">
-                            {n.name || '—'}
-                          </span>
+                          <div className="flex flex-col gap-0.5">
+                            <span className="font-bold text-foreground" dir="ltr">
+                              {n.name || '—'}
+                            </span>
+                            {n.hostname && n.hostname !== n.name ? (
+                              <Tooltip>
+                                <TooltipTrigger asChild>
+                                  <span
+                                    className="cursor-help text-[10px] text-muted-foreground"
+                                    dir="ltr"
+                                  >
+                                    hostname: {n.hostname}
+                                  </span>
+                                </TooltipTrigger>
+                                <TooltipContent dir="rtl" className="max-w-72 text-[12px]">
+                                  «{n.hostname}» نامی است که خود دستگاه هنگام عضویت گزارش
+                                  کرده و از پنل قابل تغییر نیست؛ نام اصلی نمایشی (که با
+                                  «تغییر نام» عوض می‌شود) {n.name} است — همین که درشت نمایش
+                                  داده می‌شود.
+                                </TooltipContent>
+                              </Tooltip>
+                            ) : null}
+                          </div>
                         </TableCell>
                         <TableCell className="text-[13px]">{nodeUserName(n)}</TableCell>
                         <TableCell>
@@ -406,7 +427,8 @@ function NodesManager() {
                   {renameTarget?.name}
                 </code>{' '}
                 (شناسهٔ {renameTarget?.id.toLocaleString('fa-IR') ?? '—'}). نام فقط
-                نمایشی است؛ اتصال و آدرس IP دستگاه تغییری نمی‌کند.
+                نمایشی است؛ اتصال و آدرس IP دستگاه تغییری نمی‌کند. (نامِ hostname که
+                خود دستگاه گزارش می‌کند دست‌نخورده می‌ماند.)
               </div>
             </DialogDescription>
           </DialogHeader>
@@ -457,8 +479,8 @@ function NodesManager() {
             <DialogDescription className="text-start leading-7">
               برچسب‌ها (مثل <code dir="ltr" className="font-mono">tag:office</code>) در
               سیاست دسترسی (ACL) استفاده می‌شوند — مثلاً «همهٔ دستگاه‌های با
-              برچسم office به سرور دفتر دسترسی داشته باشند». فهرست جدید جایگزین
-              برچسب‌های فعلی می‌شود؛ خالی بگذارید تا همهٔ برچسب‌ها برداشته شوند.
+              برچسم office به سرور دفتر دسترسی داشته باشند». فهرست وارد‌شده
+              جایگزین برچسب‌های فعلی دستگاه می‌شود.
             </DialogDescription>
           </DialogHeader>
           <div className="space-y-2">
@@ -486,11 +508,18 @@ function NodesManager() {
                 حداقل یک برچسب قالب «tag:name» را رعایت نمی‌کند.
               </p>
             ) : null}
+            {tagList.length === 0 ? (
+              <p className="text-[12px] leading-6 text-amber-700 dark:text-amber-300">
+                سرور اجازه نمی‌دهد همهٔ برچسب‌های یک دستگاه هم‌زمان پاک شود — برای
+                حذف یک برچسب، فهرست را بدون آن بنویسید و ذخیره کنید؛ خالی‌گذاشتن
+                فهرست ارسال نمی‌شود.
+              </p>
+            ) : null}
           </div>
           <DialogFooter className="flex-row gap-2 sm:justify-start">
             <Button
               className="h-11 min-w-28 gap-2 rounded-xl font-bold"
-              disabled={!tagsValid || tagMut.isPending}
+              disabled={!tagsSubmittable || tagMut.isPending}
               onClick={() => tagMut.mutate()}
             >
               {tagMut.isPending ? <Loader2 className="size-4 animate-spin" /> : <Tags className="size-4" />}

@@ -326,7 +326,10 @@ export interface HsUser {
 
 export interface HsNode {
   id: number
+  /** نام نمایشی — given_name سرور (همان که «تغییر نام» عوضش می‌کند)؛ در نبودش hostname */
   name: string
+  /** نامی که خود دستگاه گزارش کرده (فیلد name سرور) — بعد از تغییر نام با name فرق می‌کند */
+  hostname?: string
   user?: { id?: number; name?: string } | null
   ipAddresses?: string[]
   lastSeen?: string | null

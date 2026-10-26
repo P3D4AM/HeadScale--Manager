@@ -110,18 +110,28 @@ export async function hsUsersDestroy(ctx: HsRunContext, id: number): Promise<voi
 // ---------------------------------------------------------------------------
 export async function hsNodesList(ctx: HsRunContext): Promise<HsNode[]> {
   const raw = await runJson<Array<Record<string, unknown>> | null>(ctx, ["nodes", "list", "-o", "json"], "nodes list");
-  return asArray(raw).map((n) => ({
-    id: Number(n.id ?? 0),
-    name: String(n.name ?? n.hostname ?? ""),
-    user: (n.user as { id?: number; name?: string } | undefined) ?? null,
-    ipAddresses: asArray(n.ipAddresses as string[] | undefined).map(String),
-    lastSeen: tsToDate(n.lastSeen),
-    expiry: tsToDate(n.expiry),
-    online: typeof n.online === "boolean" ? n.online : null,
-    approvedRoutes: asArray(n.approvedRoutes as string[] | undefined).map(String),
-    availableRoutes: asArray(n.availableRoutes as string[] | undefined).map(String),
-    raw: n,
-  }));
+  return asArray(raw).map((n) => {
+    // `name` = the hostname reported by the machine itself; `nodes rename`
+    // (verified against the real 0.29.5 binary) only changes `given_name`,
+    // which is what the official CLI table shows in its "Name" column.
+    // Display name therefore prefers given_name; the raw hostname is kept
+    // separately so the UI can show it as a hint when it differs.
+    const givenName = String(n.given_name ?? n.givenName ?? "").trim();
+    const hostname = String(n.name ?? n.hostname ?? "").trim();
+    return {
+      id: Number(n.id ?? 0),
+      name: givenName || hostname,
+      hostname,
+      user: (n.user as { id?: number; name?: string } | undefined) ?? null,
+      ipAddresses: asArray(n.ipAddresses as string[] | undefined).map(String),
+      lastSeen: tsToDate(n.lastSeen),
+      expiry: tsToDate(n.expiry),
+      online: typeof n.online === "boolean" ? n.online : null,
+      approvedRoutes: asArray(n.approvedRoutes as string[] | undefined).map(String),
+      availableRoutes: asArray(n.availableRoutes as string[] | undefined).map(String),
+      raw: n,
+    };
+  });
 }
 
 export async function hsNodesRoutes(ctx: HsRunContext): Promise<HsRouteEntry[]> {
@@ -144,9 +154,12 @@ export async function hsNodesRoutes(ctx: HsRunContext): Promise<HsRouteEntry[]> 
 }
 
 export async function hsNodesApproveRoutes(ctx: HsRunContext, id: number, routes: string[]): Promise<void> {
+  // A real CIDR needs the "/len" part — the server rejects bare addresses
+  // with "no '/'" (verified against the real binary), so catch it early with
+  // a clear message instead of the raw gRPC error.
   for (const r of routes) {
-    if (!/^[0-9a-fA-F:.\/]{2,45}$/.test(r)) {
-      throw new HemError("VALIDATION_FAILED", `مسیر «${r}» یک CIDR معتبر نیست.`, { route: r });
+    if (!/^[0-9a-fA-F:.]{1,41}\/[0-9]{1,3}$/.test(r)) {
+      throw new HemError("VALIDATION_FAILED", `مسیر «${r}» یک CIDR معتبر نیست (مثال درست: 192.168.1.0/24).`, { route: r });
     }
   }
   // Empty string = revoke all approved routes (real 0.29.5 behavior)

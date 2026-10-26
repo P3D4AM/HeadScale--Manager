@@ -287,7 +287,10 @@ export interface HsUser {
 
 export interface HsNode {
   id: number;
+  /** Display name — given_name on the server (what `nodes rename` changes); falls back to the hostname */
   name: string;
+  /** Hostname reported by the machine itself (name field); may differ from name after a rename */
+  hostname?: string;
   user?: { id?: number; name?: string } | null;
   ipAddresses?: string[];
   lastSeen?: string | null;

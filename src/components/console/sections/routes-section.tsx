@@ -4,15 +4,30 @@
  * #/routes — مسیرها (Subnet Router) و Exit Node.
  * داده‌ها از «nodes list-routes» واقعی می‌آیند؛ تأیید/لغو هر مسیر با
  * approve-routes همان دستگاه انجام می‌شود (آرایهٔ کامل جایگزین می‌شود).
- * هیچ ردیف نمایشی وجود ندارد — اگر دستگاهی مسیر اعلام نکرده، صادقانه
- * خالی است.
+ * افزودن مسیر جدید = تأیید یک CIDR برای دستگاه (رفتار واقعی 0.29.5 با
+ * باینری رسمی راستی‌آزمایی شد: پیشوند اعلام‌نشده هم پذیرفته و ذخیره
+ * می‌شود، ولی تا وقتی خود دستگاه آن را با --advertise-routes اعلام نکند
+ * ترافیکش عبور نمی‌کند — در دیالوگ صادقانه توضیح داده شده).
+ * هیچ ردیف نمایشی وجود ندارد — اگر داده‌ای نیست، صادقانه خالی است.
  */
 
 import { useCallback, useMemo, useState } from 'react'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { toast } from 'sonner'
-import { BookOpenCheck, Globe2, Info, Loader2, Network, RefreshCw, Route as RouteIcon, XCircle } from 'lucide-react'
+import {
+  BookOpenCheck,
+  Globe2,
+  Info,
+  Loader2,
+  Network,
+  Plus,
+  RefreshCw,
+  Route as RouteIcon,
+  Trash2,
+  XCircle,
+} from 'lucide-react'
 import { AgentError } from '@/lib/agent'
+import type { HsNode } from '@/lib/agent'
 import { navigate } from '@/lib/nav'
 import { AGENT_QUERY_PREFIX, useSessionDataQuery, useSessionId } from '../use-agent'
 import {
@@ -23,6 +38,7 @@ import {
   isExitNodePrefix,
   type HsRouteEntry,
 } from '@/lib/manage/api'
+import { CIDR_SYNTAX_HELP, isValidCidr } from '@/lib/manage/format'
 import { SectionShell } from '../manage/section-shell'
 import { EmptyState, ErrorState } from '../manage/data-state'
 import { ConfirmActionDialog } from '../manage/typed-confirm-dialog'
@@ -34,6 +50,23 @@ import {
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent } from '@/components/ui/card'
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog'
+import { Input } from '@/components/ui/input'
+import { Label } from '@/components/ui/label'
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select'
 import {
   Table,
   TableBody,
@@ -49,11 +82,22 @@ export function RoutesSection() {
     <SectionShell
       icon={RouteIcon}
       title="مسیرها و Exit Node"
-      description="وقتی دستگاهی مسیر (مثل رنج شبکهٔ دفتر یا 0.0.0.0/0 برای Exit Node) اعلام کند، اینجا باید تأییدش کنید تا بقیهٔ دستگاه‌ها بتوانند از آن استفاده کنند."
+      description="وقتی دستگاهی مسیر (مثل رنج شبکهٔ دفتر یا 0.0.0.0/0 برای Exit Node) اعلام کند، اینجا باید تأییدش کنید تا بقیهٔ دستگاه‌ها بتوانند از آن استفاده کنند. می‌توانید مسیر جدید هم همین‌جا برای یک دستگاه تأیید کنید."
     >
       <RoutesManager />
     </SectionShell>
   )
+}
+
+/** مسیرهای تأییدشدهٔ یک دستگاه از دادهٔ نرمال‌شده + خام (هر دو منبع واقعی‌اند) */
+function nodeApprovedRoutes(node: HsNode | undefined): string[] {
+  if (!node) return []
+  const out = new Set<string>()
+  for (const p of node.approvedRoutes ?? []) if (p) out.add(p)
+  const raw = node.raw ?? {}
+  const rawApproved = raw['approved_routes'] ?? raw['approvedRoutes']
+  if (Array.isArray(rawApproved)) for (const p of rawApproved) if (typeof p === 'string' && p) out.add(p)
+  return [...out].sort()
 }
 
 function RoutesManager() {
@@ -62,12 +106,62 @@ function RoutesManager() {
   const routes = useSessionDataQuery<HsRouteEntry[]>(['hs', 'routes'], 'hs/nodes/routes', {
     staleTime: 30_000,
   })
+  const nodes = useSessionDataQuery<HsNode[]>(['hs', 'nodes'], 'hs/nodes', {
+    staleTime: 30_000,
+  })
 
   const invalidate = useCallback(() => {
     void qc.invalidateQueries({ queryKey: [AGENT_QUERY_PREFIX] })
   }, [qc])
 
   const [revokeAllTarget, setRevokeAllTarget] = useState<{ key: string; hostname: string; nodeId: number | null; prefixes: string[] } | null>(null)
+
+  // ── افزودن مسیر جدید (تأیید یک CIDR برای دستگاه) ──
+  const [addOpen, setAddOpen] = useState(false)
+  const [addNodeId, setAddNodeId] = useState<string>('')
+  const [addValue, setAddValue] = useState('')
+  const addList = useMemo(
+    () =>
+      addValue
+        .split(/[,،\s]+/)
+        .map((t) => t.trim())
+        .filter(Boolean),
+    [addValue]
+  )
+  const addValid = addList.length > 0 && addList.every(isValidCidr)
+  const selectedNode = useMemo(
+    () => nodes.data?.find((n) => String(n.id) === addNodeId),
+    [nodes.data, addNodeId]
+  )
+  const selectedApproved = useMemo(() => nodeApprovedRoutes(selectedNode), [selectedNode])
+  const addDuplicates = useMemo(
+    () => addList.filter((p) => selectedApproved.includes(p)),
+    [addList, selectedApproved]
+  )
+  const addMut = useMutation({
+    mutationFn: async () => {
+      if (!sid || !addNodeId) throw new AgentError('NOT_CONNECTED', 'ابتدا یک دستگاه انتخاب کنید.')
+      // آرایهٔ کامل مسیرهای تأییدشده جایگزین می‌شود (رفتار واقعی approve-routes):
+      // مسیرهای فعلی + مسیرهای جدید
+      const next = [...new Set([...selectedApproved, ...addList])]
+      return hsNodeApproveRoutes(sid, Number(addNodeId), next)
+    },
+    onSuccess: (_res) => {
+      toast.success(
+        `مسیر(های) ${addList.join('، ')} برای «${selectedNode?.name ?? addNodeId}» تأیید شد — اگر دستگاه همین پیشوندها را اعلام کند، بلافاصله فعال است.`
+      )
+      setAddOpen(false)
+      setAddValue('')
+      invalidate()
+    },
+    onError: (err) => toast.error(agentErrText(err)),
+  })
+
+  const openAdd = (nodeId?: number) => {
+    setAddNodeId(nodeId !== undefined ? String(nodeId) : '')
+    setAddValue('')
+    setAddOpen(true)
+  }
 
   // تأیید/لغو یک مسیر — آرایهٔ کامل مسیرهای تأییدشدهٔ همان دستگاه فرستاده می‌شود
   const [pendingKey, setPendingKey] = useState<string | null>(null)
@@ -89,6 +183,28 @@ function RoutesManager() {
     },
     onError: (err) => toast.error(agentErrText(err)),
     onSettled: () => setPendingKey(null),
+  })
+
+  // ── حذف یک مسیر (لغو تأیید با توضیح صادقانه دربارهٔ حذف کامل) ──
+  const [deleteTarget, setDeleteTarget] = useState<{
+    nodeId: number
+    hostname: string
+    prefix: string
+    advertised: boolean
+    currentApproved: string[]
+  } | null>(null)
+  const deleteMut = useMutation({
+    mutationFn: async () => {
+      if (!sid || !deleteTarget) throw new AgentError('NOT_CONNECTED', 'نشست فعالی وجود ندارد.')
+      const next = deleteTarget.currentApproved.filter((p) => p !== deleteTarget.prefix)
+      return hsNodeApproveRoutes(sid, deleteTarget.nodeId, next)
+    },
+    onSuccess: () => {
+      toast.success(`تأیید مسیر ${deleteTarget?.prefix} لغو شد.`)
+      setDeleteTarget(null)
+      invalidate()
+    },
+    onError: (err) => toast.error(agentErrText(err)),
   })
 
   const revokeAllMut = useMutation({
@@ -122,17 +238,27 @@ function RoutesManager() {
               ? `${groups.length.toLocaleString('fa-IR')} دستگاه مسیر اعلام کرده است.`
               : null}
         </p>
-        <Button
-          variant="outline"
-          className="h-11 gap-2 rounded-xl font-bold"
-          onClick={() => {
-            void routes.refetch()
-            toast.success('بازآوری فهرست مسیرها…')
-          }}
-        >
-          <RefreshCw className={routes.isFetching ? 'size-4 animate-spin' : 'size-4'} />
-          بازآوری
-        </Button>
+        <div className="flex flex-wrap items-center gap-2">
+          <Button
+            className="h-11 gap-2 rounded-xl bg-emerald-600 font-bold text-white hover:bg-emerald-500 dark:bg-emerald-500 dark:text-slate-950 dark:hover:bg-emerald-400"
+            disabled={nodes.isLoading || (nodes.data ?? []).length === 0}
+            onClick={() => openAdd()}
+          >
+            <Plus className="size-4" />
+            تأیید مسیر جدید
+          </Button>
+          <Button
+            variant="outline"
+            className="h-11 gap-2 rounded-xl font-bold"
+            onClick={() => {
+              void routes.refetch()
+              toast.success('بازآوری فهرست مسیرها…')
+            }}
+          >
+            <RefreshCw className={routes.isFetching ? 'size-4 animate-spin' : 'size-4'} />
+            بازآوری
+          </Button>
+        </div>
       </div>
 
       {routes.isLoading ? (
@@ -152,7 +278,7 @@ function RoutesManager() {
       ) : groups.length === 0 ? (
         <EmptyState
           icon={<Network className="size-7" />}
-          title="هنوز هیچ دستگاهی مسیری اعلام نکرده است"
+          title="هنوز هیچ دستگاهی مسیری اعلام یا تأیید نکرده است"
           body={
             <>
               «مسیر» یعنی یک دستگاه، دسترسی به یک رنج شبکه (مثل{' '}
@@ -160,12 +286,21 @@ function RoutesManager() {
               را برای بقیهٔ اعضای VPN فراهم کند (Subnet Router)، یا با{' '}
               <code dir="ltr" className="font-mono">0.0.0.0/0</code> نقش Exit Node
               بگیرد. دستگاه باید موقع اتصال این مسیرها را «اعلام» کند تا اینجا
-              برای تأیید نمایش داده شوند — راهنمای کامل در فصل ۶ (شبکهٔ دفتر) و
-              فصل ۷ (Exit Node) آموزش.
+              برای تأیید نمایش داده شوند — یا می‌توانید همین حالا با دکمهٔ
+              «تأیید مسیر جدید» یک پیشوند را روی سرور برای دستگاهی پیشتأیید کنید.
+              راهنمای کامل در فصل ۶ (شبکهٔ دفتر) و فصل ۷ (Exit Node) آموزش.
             </>
           }
           actions={
             <>
+              <Button
+                onClick={() => openAdd()}
+                className="h-12 gap-2 rounded-xl bg-emerald-600 px-6 font-bold text-white hover:bg-emerald-500 dark:bg-emerald-500 dark:text-slate-950 dark:hover:bg-emerald-400"
+                disabled={nodes.isLoading || (nodes.data ?? []).length === 0}
+              >
+                <Plus className="size-5" />
+                تأیید مسیر جدید
+              </Button>
               <Button
                 variant="outline"
                 onClick={() => navigate('#/learn/6')}
@@ -203,27 +338,38 @@ function RoutesManager() {
                         </p>
                         <p className="text-[11px] text-muted-foreground">
                           {g.nodeId !== null ? `دستگاه #${g.nodeId.toLocaleString('fa-IR')}` : 'دستگاه'} ·{' '}
-                          {g.routes.length.toLocaleString('fa-IR')} مسیر اعلام‌شده
+                          {g.routes.length.toLocaleString('fa-IR')} مسیر در فهرست
                         </p>
                       </div>
                     </div>
-                    {currentApproved.length > 0 ? (
+                    <div className="flex flex-wrap items-center gap-2">
                       <Button
                         variant="outline"
-                        className="h-11 gap-2 rounded-xl font-bold text-red-600 hover:text-red-500 dark:text-red-400"
-                        onClick={() =>
-                          setRevokeAllTarget({
-                            key: g.key,
-                            hostname: g.hostname,
-                            nodeId: g.nodeId,
-                            prefixes: currentApproved,
-                          })
-                        }
+                        className="h-11 gap-2 rounded-xl font-bold"
+                        disabled={g.nodeId === null}
+                        onClick={() => (g.nodeId !== null ? openAdd(g.nodeId) : undefined)}
                       >
-                        <XCircle className="size-4" />
-                        لغو همهٔ مسیرهای این دستگاه
+                        <Plus className="size-4" />
+                        مسیر جدید
                       </Button>
-                    ) : null}
+                      {currentApproved.length > 0 ? (
+                        <Button
+                          variant="outline"
+                          className="h-11 gap-2 rounded-xl font-bold text-red-600 hover:text-red-500 dark:text-red-400"
+                          onClick={() =>
+                            setRevokeAllTarget({
+                              key: g.key,
+                              hostname: g.hostname,
+                              nodeId: g.nodeId,
+                              prefixes: currentApproved,
+                            })
+                          }
+                        >
+                          <XCircle className="size-4" />
+                          لغو همهٔ مسیرهای این دستگاه
+                        </Button>
+                      ) : null}
+                    </div>
                   </div>
                   <div className="overflow-x-auto">
                     <Table>
@@ -233,6 +379,7 @@ function RoutesManager() {
                           <TableHead className="text-start">اعلام‌شده</TableHead>
                           <TableHead className="text-start">تأییدشده (فعال)</TableHead>
                           <TableHead className="text-start">نقش</TableHead>
+                          <TableHead className="w-20 text-start">حذف</TableHead>
                         </TableRow>
                       </TableHeader>
                       <TableBody>
@@ -315,6 +462,27 @@ function RoutesManager() {
                                   ) : null}
                                 </div>
                               </TableCell>
+                              <TableCell>
+                                <Button
+                                  variant="ghost"
+                                  size="icon"
+                                  className="size-11 rounded-xl text-red-600 hover:text-red-500 dark:text-red-400"
+                                  aria-label={`حذف مسیر ${prefix}`}
+                                  disabled={g.nodeId === null}
+                                  onClick={() => {
+                                    if (g.nodeId === null) return
+                                    setDeleteTarget({
+                                      nodeId: g.nodeId,
+                                      hostname: g.hostname,
+                                      prefix,
+                                      advertised: r.advertised,
+                                      currentApproved,
+                                    })
+                                  }}
+                                >
+                                  <Trash2 className="size-4" />
+                                </Button>
+                              </TableCell>
                             </TableRow>
                           )
                         })}
@@ -366,6 +534,140 @@ function RoutesManager() {
           </div>
         </CardContent>
       </Card>
+
+      {/* دیالوگ تأیید مسیر جدید */}
+      <Dialog open={addOpen} onOpenChange={(o) => (addMut.isPending ? undefined : o ? setAddOpen(true) : setAddOpen(false))}>
+        <DialogContent className="max-w-xl">
+          <DialogHeader className="text-start">
+            <DialogTitle>تأیید مسیر جدید برای دستگاه</DialogTitle>
+            <DialogDescription className="text-start leading-7">
+              پیشوند(های) CIDR را وارد کنید تا روی سرور برای دستگاه انتخابی تأیید
+              (approve) شوند. نکتهٔ مهم و صادقانه: در معماری Tailscale/Headscale،
+              مسیرِ واقعاً فعال باید از سمت خودِ دستگاه هم با{' '}
+              <code dir="ltr" className="font-mono">--advertise-routes</code> اعلام
+              شود؛ تأیید پیشوندی که دستگاه اعلام نکرده روی سرور ثبت می‌ماند و به‌محض
+              اعلامِ همان پیشوند توسط دستگاه، بی‌درنگ فعال می‌شود.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4">
+            <div className="space-y-2">
+              <Label className="text-[13px] font-bold">دستگاه</Label>
+              <Select value={addNodeId} onValueChange={setAddNodeId} disabled={addMut.isPending}>
+                <SelectTrigger className="h-12 w-full rounded-xl" dir="ltr">
+                  <SelectValue placeholder={nodes.isLoading ? 'در حال خواندن دستگاه‌ها…' : 'یک دستگاه انتخاب کنید'} />
+                </SelectTrigger>
+                <SelectContent dir="ltr">
+                  {(nodes.data ?? [])
+                    .slice()
+                    .sort((a, b) => a.name.localeCompare(b.name))
+                    .map((n) => (
+                      <SelectItem key={n.id} value={String(n.id)}>
+                        {n.name} (#{n.id}){n.online === true ? ' — آنلاین' : ''}
+                      </SelectItem>
+                    ))}
+                </SelectContent>
+              </Select>
+              {selectedNode && selectedApproved.length > 0 ? (
+                <p className="text-[11px] leading-6 text-muted-foreground">
+                  مسیرهای همین حالا تأییدشدهٔ این دستگاه:{' '}
+                  <span dir="ltr" className="font-mono">
+                    {selectedApproved.join('، ')}
+                  </span>
+                </p>
+              ) : null}
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="route-add" className="text-[13px] font-bold">
+                پیشوند مسیر (ها)
+              </Label>
+              <Input
+                id="route-add"
+                dir="ltr"
+                className="h-11 rounded-xl font-mono text-start"
+                placeholder="192.168.1.0/24, 10.10.0.0/24"
+                value={addValue}
+                onChange={(e) => setAddValue(e.target.value)}
+                autoComplete="off"
+                spellCheck={false}
+                disabled={addMut.isPending || !addNodeId}
+              />
+              <p className="text-[11px] leading-6 text-muted-foreground">{CIDR_SYNTAX_HELP}</p>
+              {addList.length > 0 && !addValid ? (
+                <p className="text-[12px] font-bold text-red-600 dark:text-red-400">
+                  حداقل یک مورد قالب CIDR معتبر (مثل 192.168.1.0/24) را رعایت نمی‌کند.
+                </p>
+              ) : null}
+              {addValid && addDuplicates.length > 0 ? (
+                <p className="text-[12px] leading-6 text-amber-700 dark:text-amber-300">
+                  {addDuplicates.join('، ')} از قبل در فهرست تأییدشده‌های این دستگاه
+                  هست — دوباره تأییدشدنش ضرری ندارد ولی تکراری است.
+                </p>
+              ) : null}
+            </div>
+          </div>
+          <DialogFooter className="flex-row gap-2 sm:justify-start">
+            <Button
+              className="h-11 min-w-28 gap-2 rounded-xl font-bold"
+              disabled={!addNodeId || !addValid || addMut.isPending}
+              onClick={() => addMut.mutate()}
+            >
+              {addMut.isPending ? <Loader2 className="size-4 animate-spin" /> : <Plus className="size-4" />}
+              تأیید مسیر
+            </Button>
+            <Button
+              variant="outline"
+              className="h-11 min-w-24 rounded-xl font-bold"
+              disabled={addMut.isPending}
+              onClick={() => setAddOpen(false)}
+            >
+              انصراف
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* تأیید حذف یک مسیر — با توضیح صادقانه دربارهٔ حذف کامل */}
+      <ConfirmActionDialog
+        open={deleteTarget !== null}
+        onOpenChange={(o) => (deleteMut.isPending ? undefined : o ? undefined : setDeleteTarget(null))}
+        title="حذف این مسیر"
+        description={
+          <>
+            تأیید مسیر{' '}
+            <code dir="ltr" className="rounded bg-muted px-1.5 py-0.5 font-mono text-[13px]">
+              {deleteTarget?.prefix}
+            </code>{' '}
+            از دستگاه{' '}
+            <strong dir="ltr">{deleteTarget?.hostname}</strong> لغو می‌شود و
+            دستگاه‌هایی که از آن استفاده می‌کردند دسترسی‌شان قطع می‌شود.
+            {deleteTarget?.advertised ? (
+              <>
+                {' '}
+                <br />
+                نکتهٔ صادقانه: خود دستگاه هنوز این پیشوند را «اعلام» می‌کند، پس
+                ردیفش با وضعیت «اعلام‌شده / تأییدنشده» در فهرست می‌ماند — حذفِ
+                کاملِ ردیف فقط از سمت خودِ دستگاه ممکن است؛ روی آن دستگاه دستور{' '}
+                <code dir="ltr" className="font-mono text-[12px]">
+                  tailscale set --advertise-routes=
+                </code>{' '}
+                را با فهرستِ بدونِ این پیشوند (یا خالی برای پاک‌کردن همه) اجرا
+                کنید.
+              </>
+            ) : (
+              <>
+                {' '}
+                <br />
+                این پیشوند دیگر از سمت دستگاه اعلام نمی‌شود؛ با لغو تأیید، ردیفش
+                به‌کلی از فهرست حذف می‌شود.
+              </>
+            )}
+          </>
+        }
+        confirmLabel="بله، تأیید این مسیر را لغو کن"
+        tone="destructive"
+        onConfirm={() => deleteMut.mutate()}
+        pending={deleteMut.isPending}
+      />
 
       {/* تأیید لغو همهٔ مسیرهای یک دستگاه */}
       <ConfirmActionDialog

@@ -198,14 +198,40 @@ export function hsPolicySet(sid: string, content: string) {
 /**
  * متن خطای agent برای توست — پیام فارسی + خروجی خام واقعی (stderr) اگر
  * عملیات روی سرور شکست خورده باشد؛ صادقانه و بدون سانسور.
+ * خطاهای شناخته‌شدهٔ headscale (راستی‌آزمایی‌شده با باینری واقعی 0.29.5)
+ * پیش از نمایش، به توضیح فارسیِ قابل‌فهم ترجمه می‌شوند.
  */
 export function agentErrText(err: unknown): string {
   if (err instanceof AgentError) {
     const detail = err.detail as { stderr?: unknown; stdout?: unknown } | undefined
     const stderr = typeof detail?.stderr === 'string' ? detail.stderr.trim() : ''
+    const translated = translateHsError(stderr)
+    if (translated) return translated
     if (stderr) return `${err.message} — خروجی سرور: ${stderr}`
   }
   return err instanceof Error ? err.message : 'خطای نامشخص.'
+}
+
+/**
+ * ترجمهٔ خطاهای شناخته‌شدهٔ سرور به توضیح فارسیِ ریشه‌یابی‌شده.
+ * متن‌های داخل شرط‌ها عین خروجی واقعی headscale v0.29.5 هستند
+ * (با باینری واقعی تست شدند — نه حدس).
+ */
+export function translateHsError(stderr: string): string | null {
+  if (!stderr) return null
+  // nodes tag: تگ در سیاست دسترسی (tagOwners) تعریف نشده
+  if (stderr.includes('requested tags') && stderr.includes('not permitted')) {
+    return 'سرور این برچسب را نپذیرفت: در headscale هر برچسب باید ابتدا در سیاست دسترسی (بخش tagOwners) تعریف شود. ابتدا از بخش «سیاست ACL» برچسب را به tagOwners اضافه کنید (فصل ۸ آموزش) و دوباره امتحان کنید.'
+  }
+  // nodes tag: پاک‌کردن همهٔ تگ‌ها
+  if (stderr.includes('cannot remove all tags')) {
+    return 'سرور اجازه نمی‌دهد همهٔ برچسب‌های یک دستگاه هم‌زمان برداشته شود (دستگاهِ برچسب‌دار باید حداقل یک برچسب داشته باشد). اگر برچسب خاصی را نمی‌خواهید، فقط همان را از فهرست حذف کنید و بقیه را نگه دارید.'
+  }
+  // approve-routes: CIDR بی‌نقص نبودن
+  if (stderr.includes('parsing route') || stderr.includes('no \'/\'')) {
+    return 'قالب مسیر پذیرفته نشد — مسیر باید یک CIDR کامل باشد، یعنی آدرس شبکه + طول پیشوند (مثال درست: 192.168.1.0/24؛ غلط: 192.168.1.5 یا 192.168.1.0).'
+  }
+  return null
 }
 
 /** stderr خام خطای agent (برای نمایش در بلوک LTR) — اگر وجود نداشته باشد null */
@@ -252,26 +278,33 @@ export function userNameById(users: HsUser[] | undefined, id: number | undefined
  * گروه‌بندی مسیرها بر اساس دستگاه — برای «لغو همهٔ مسیرهای این دستگاه».
  *
  * ⚠️ شکل واقعی «nodes list-routes -o json» در 0.29.5 (راستی‌آزمایی‌شده با
- * دستگاه tailscale واقعی روی سرور دمو): خروجی آرایه‌ای از «دستگاه‌ها»ست، نه
- * ردیف‌های per-route — یعنی id همان شناسهٔ دستگاه است و مسیرها در
- * raw.available_routes / raw.approved_routes (کلیدهای snake_case) می‌آیند؛
- * فیلدهای نرمال‌شدهٔ hostname/prefix/enabled همگی null هستند. حالت per-route
- * (فیلدهای مستقیم) هم برای سازگاری آینده پشتیبانی می‌شود.
+ * باینری واقعی): خروجی آرایه‌ای از «دستگاه‌ها»ست، نه ردیف‌های per-route — یعنی
+ * id همان شناسهٔ دستگاه است و مسیرها در raw.available_routes / raw.approved_routes
+ * (کلیدهای snake_case) می‌آیند؛ فیلدهای نرمال‌شدهٔ hostname/prefix/enabled همگی
+ * null هستند. حالت per-route (فیلدهای مستقیم) هم برای سازگاری آینده پشتیبانی
+ * می‌شود.
+ *
+ * نکتهٔ مهم (تست واقعی): دستگاهی که فقط «مسیر تأییدشده» دارد (مثلاً مسیری که
+ * مدیر از پنل اضافه کرده) ممکن است اصلاً کلید available_routes را نداشته باشد
+ * — چنین ردیفی هم باید به‌عنوان گروهِ همان دستگاه خوانده شود، وگرنه مسیرهای
+ * تأییدشده‌اش به‌کل از جدول می‌افتند.
  */
 export function groupRoutesByNode(routes: HsRouteEntry[] | undefined): RouteGroup[] {
   const map = new Map<string, RouteGroup>()
   for (const r of routes ?? []) {
     const raw = r.raw ?? {}
     const rawAvailable = raw['available_routes'] ?? raw['availableRoutes']
+    const rawApproved = raw['approved_routes'] ?? raw['approvedRoutes']
 
-    // ── حالت 0.29.5: هر ردیف یک دستگاه است ──
-    if (Array.isArray(rawAvailable)) {
+    // ── حالت 0.29.5: هر ردیف یک دستگاه است (available یا approved هر دو ممکن
+    //    است غایب باشند؛ حضورِ هر کدام برای شناسایی حالت کافی است) ──
+    if (Array.isArray(rawAvailable) || Array.isArray(rawApproved)) {
       const nodeId = typeof r.id === 'number' && Number.isFinite(r.id) ? r.id : null
-      const rawApproved = raw['approved_routes'] ?? raw['approvedRoutes']
-      const available = rawAvailable.map(String)
+      const available = Array.isArray(rawAvailable) ? rawAvailable.map(String) : []
       const approved = Array.isArray(rawApproved) ? rawApproved.map(String) : []
+      // نام نمایشی: given_name (نامی که «تغییر نام» عوضش می‌کند) اولویت دارد
       const hostname =
-        String(raw['name'] ?? raw['given_name'] ?? r.hostname ?? '') ||
+        String(raw['given_name'] ?? raw['givenName'] ?? raw['name'] ?? r.hostname ?? '') ||
         (r.node !== null ? String(r.node) : '') ||
         'ناشناس'
       const key = nodeId !== null ? `id:${nodeId}` : `h:${hostname}`

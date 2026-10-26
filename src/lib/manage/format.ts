@@ -152,7 +152,9 @@ export function nodeLastSeen(node: { lastSeen?: string | null; raw?: Record<stri
 export function nodeTags(raw: Record<string, unknown> | undefined): string[] {
   if (!raw) return []
   const out = new Set<string>()
-  for (const field of ['forcedTags', 'forced_tags', 'validTags', 'valid_tags', 'givenTags', 'given_tags']) {
+  // 'tags' — همان فیلدی که «nodes tag» واقعی 0.29.5 بعد از موفقیت می‌نویسد
+  // (با باینری واقعی راستی‌آزمایی شد)؛ بقیه برای سازگاری با شکل‌های قدیمی/آینده.
+  for (const field of ['tags', 'forcedTags', 'forced_tags', 'validTags', 'valid_tags', 'givenTags', 'given_tags']) {
     const v = raw[field]
     if (Array.isArray(v)) {
       for (const t of v) if (typeof t === 'string' && t) out.add(t)
@@ -189,6 +191,38 @@ export const EXPIRATION_CUSTOM_HELP =
 export const TAG_PATTERN = /^tag:[A-Za-z0-9_.:-]{1,60}$/
 
 export const TAG_SYNTAX_HELP = 'هر برچسب باید به شکل tag:name باشد (مثال: tag:office) — با ویرگول جدا کنید.'
+
+// ---------------------------------------------------------------------------
+// مسیرها (CIDR)
+// ---------------------------------------------------------------------------
+
+/**
+ * اعتبارسنجی CIDR — IPv4 (مثل 192.168.1.0/24) یا IPv6 (مثل fd00::/8).
+ * طول پیشوند هم از نظر محدوده بررسی می‌شود (خطای «no '/'» و پارس سرور
+ * واقعی 0.29.5 با همین قیدها جلوی گرفته می‌شود).
+ */
+export function isValidCidr(value: string): boolean {
+  const m = /^(.+?)\/(\d{1,3})$/.exec(value.trim())
+  if (!m) return false
+  const addr = m[1]
+  const len = Number(m[2])
+  const v4 = /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/.exec(addr)
+  if (v4) {
+    if (len > 32) return false
+    return v4.slice(1).every((octet) => {
+      const n = Number(octet)
+      return Number.isInteger(n) && n >= 0 && n <= 255
+    })
+  }
+  // IPv6 — حداقل یک «:»، نویسه‌های مجاز، و حداکثر یک «::»
+  if (!/^[0-9a-fA-F:]+$/.test(addr) || !addr.includes(':')) return false
+  const doubleColon = addr.match(/::/g)
+  if (doubleColon && doubleColon.length > 1) return false
+  return len <= 128
+}
+
+export const CIDR_SYNTAX_HELP =
+  'هر مسیر باید یک CIDR کامل باشد: آدرس شبکه + / طول پیشوند (مثال: 192.168.1.0/24) — با ویرگول جدا کنید.'
 
 /** نام کاربر — همان regex واقعی agent */
 export const USERNAME_PATTERN = /^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,62}$/
