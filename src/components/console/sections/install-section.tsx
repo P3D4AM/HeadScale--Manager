@@ -278,6 +278,15 @@ function InstallWizard() {
         toast.success('نصب تمام شد.', { description: result.summary })
       } else if (result.cancelled) {
         toast.info('اجرا لغو شد.', { description: result.summary })
+      } else if (
+        result.finalState === 'pending_verification' ||
+        result.finalState === 'service_not_ready'
+      ) {
+        // کد خروج ۴ یعنی نصب انجام شده و تأیید بیرونی/سرویس در انتظار است —
+        // نه شکست نصب (اصلاح تسک ۲۶؛ قرارداد FACTS §10).
+        toast.warning('نصب انجام شد؛ در انتظار تأیید نهایی.', {
+          description: result.summary,
+        })
       } else {
         toast.error('نصب ناتمام ماند.', { description: result.summary })
       }

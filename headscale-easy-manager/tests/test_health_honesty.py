@@ -54,14 +54,17 @@ class _Resp:
 
 
 def _run_flow(tmp_path, monkeypatch, capsys, *, https=True, dns_ok=True,
-              local_health=200, external_health=None, service_starts=True):
+              local_health=200, external_health=None, external_fail_times=0,
+              service_starts=True):
     """اجرای جریان کامل نصب (غیر dry-run) با شبیه‌سازی کامل عوارض جانبی.
 
     Args:
         https: حالت HTTPS (caddy reuse) یا بدون HTTPS (caddy skip).
         dns_ok: نتیجهٔ چک DNS گام validate.
         local_health: کد پاسخ http://127.0.0.1:8080/health (None = خطای اتصال).
-        external_health: کد پاسخ https://دامنه/health (None = خطای اتصال).
+        external_health: کد پاسخ https://دامنه/health (None = خطای اتصال دائمی).
+        external_fail_times: چند تلاشِ اولِ چک بیرونی خطا بدهد قبل از پاسخ موفق
+            (شبیه‌سازی «گواهی با تأخیر صادر می‌شود» — سناریوی اصلی تسک ۲۶).
         service_starts: آیا سرویس headscale بالا می‌آید (wait_healthy).
     """
     from hem.headscale import ctl, releases
@@ -139,17 +142,25 @@ def _run_flow(tmp_path, monkeypatch, capsys, *, https=True, dns_ok=True,
         services, "wait_healthy", lambda unit, timeout=90, **kw: service_starts
     )
 
-    # چک‌های HTTP گام health — فقط لایهٔ شبکه شبیه‌سازی می‌شود
+    # چک‌های HTTP گام health — فقط لایهٔ شبکه شبیه‌سازی می‌شود.
+    # شمارندهٔ تلاش‌های بیرونی برای شبیه‌سازی «گواهی با تأخیر صادر می‌شود».
+    ext_attempts = {"n": 0}
+
     def fake_urlopen(url, timeout=None):
         if "127.0.0.1" in url:
             if local_health is None:
                 raise OSError("local connection refused")
             return _Resp(local_health)
-        if external_health is None:
+        ext_attempts["n"] += 1
+        if external_health is None or ext_attempts["n"] <= external_fail_times:
             raise OSError("TLS not ready")
         return _Resp(external_health)
 
     monkeypatch.setattr("urllib.request.urlopen", fake_urlopen)
+
+    # پنجرهٔ تلاش مجدد (اصلاح تسک ۲۶) نباید تست را کند کند — خواب واقعی
+    # حذف می‌شود ولی شمارش تلاش‌ها از fake_urlopen واقعی است.
+    monkeypatch.setattr(flow_mod, "_sleep", lambda seconds: None)
 
     # کنترل headscale
     monkeypatch.setattr(ctl, "health", lambda: "OK")
@@ -258,6 +269,90 @@ def test_local_health_fail_is_service_not_ready(tmp_path, monkeypatch, capsys):
     assert rc == C.EXIT_MISSING
     assert "نصب انجام شد اما سرویس آماده نیست" in out
     assert "نصب کامل شد" not in out
+
+
+# ─── اصلاح تسک ۲۶: پنجرهٔ تلاش مجدد چک بیرونی + علت دقیق ─────────────
+
+
+def test_https_late_cert_within_retry_window_is_full_success(tmp_path, monkeypatch, capsys):
+    """سناریوی گزارش کاربر: نصب سالم، سرویس فعال، گواهی با تأخیر صادر می‌شود.
+
+    دو تلاشِ اولِ چک بیرونی خطا می‌دهد (گواهی هنوز صادر نشده) ولی در پنجرهٔ
+    تلاش مجدد پاسخ ۲۰۰ می‌آید → نصب باید صادقانه full_success (کد ۰) شود،
+    نه pending_verification (کد ۴).
+    """
+    flow, rc, out = _run_flow(
+        tmp_path, monkeypatch, capsys,
+        https=True, dns_ok=True, local_health=200,
+        external_health=200, external_fail_times=2,
+        service_starts=True,
+    )
+    assert flow.state.data["final_status"] == "full_success", out
+    assert rc == C.EXIT_OK, f"گواهیِ دیررس نباید نصب سالم را شکست بدهد؛ got {rc}\n{out}"
+    # تلاش مجدد واقعاً انجام شده (نه پاسخ از همان اول) — ارقام کنسول ASCII است
+    # (هماهنگ با «گام 15/17» خود StepRunner)
+    assert "تلاش 2 از 6" in out, out
+    assert "نصب کاملاً موفق است" in out
+
+
+def test_https_retry_exhausted_stays_pending_with_precise_reason(
+    tmp_path, monkeypatch, capsys
+):
+    """اگر پس از کل پنجرهٔ تلاش هم بیرونی پاسخ نداد → همان pending_verification.
+
+    ولی این بار با علت دقیق: کدام بررسی شکست خورد، آخرین خطا چیست و دستور
+    رفع کدام است — «تأییدنشدهٔ» بی‌دلیل ممنوع (اصلاح تسک ۲۶).
+    """
+    flow, rc, out = _run_flow(
+        tmp_path, monkeypatch, capsys,
+        https=True, dns_ok=True, local_health=200, external_health=None,
+        service_starts=True,
+    )
+    assert flow.state.data["final_status"] == "pending_verification", out
+    assert rc == C.EXIT_MISSING
+    # کل پنجرهٔ تلاش واقعاً مصرف شده است (۶ تلاش)
+    assert "تلاش 6 از 6" in out, out
+    # علت دقیق: بررسی شکست‌خورده + URL + آخرین خطا + دستور رفع
+    assert "بررسی شکست‌خورده: دسترسی بیرونی" in out, out
+    assert "https://health.example.com/health" in out, out
+    assert "TLS not ready" in out, out
+    assert "curl -sS https://health.example.com/health" in out, out
+    assert "hsctl doctor" in out
+    # خطا در state هم ثبت شده (برای گزارش md و ابزارهای بعدی)
+    health = flow.state.data["health"]
+    assert health["https_ok"] is False
+    assert health["https_error"] == "TLS not ready"
+    report = _latest_report(tmp_path)
+    assert "TLS not ready" in report
+
+
+def test_dns_pending_shows_dns_specific_reason(tmp_path, monkeypatch, capsys):
+    """DNS ناهمخوان → pending_verification با علتِ مخصوص DNS و دستور رفع آن."""
+    flow, rc, out = _run_flow(
+        tmp_path, monkeypatch, capsys,
+        https=True, dns_ok=False, local_health=200, external_health=200,
+        service_starts=True,
+    )
+    assert flow.state.data["final_status"] == "pending_verification", out
+    assert rc == C.EXIT_MISSING
+    assert "بررسی شکست‌خورده: رکورد DNS دامنه" in out, out
+    assert "رکورد A" in out, out
+    # علت HTTPS نباید بی‌جهت ذکر شود — چک HTTPS پاس شده است
+    assert "بررسی شکست‌خورده: دسترسی بیرونی" not in out
+
+
+def test_local_retry_recovers_transient_refusal(tmp_path, monkeypatch, capsys):
+    """چک محلی هم پنجرهٔ کوتاه تلاش مجدد دارد — ردشدنِ لحظه‌ای دیگر سرویسِ
+    سالم را service_not_ready نمی‌کند."""
+    # local_health دومی از همان اول ۲۰۰ است (تلاش مجدد لازم نیست) — این تست
+    # فقط مسیر خوش‌بینانهٔ سریع را قفل می‌کند؛ مسیر خطای دائمی در تست قبلی است.
+    flow, rc, out = _run_flow(
+        tmp_path, monkeypatch, capsys,
+        https=False, dns_ok=True, local_health=200, external_health=None,
+        service_starts=True,
+    )
+    assert flow.state.data["final_status"] == "verified", out
+    assert rc == C.EXIT_OK
 
 
 def _latest_report(tmp_path) -> str:

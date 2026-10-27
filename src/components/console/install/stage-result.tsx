@@ -51,41 +51,35 @@ export function classifyOutcome(outcome: JobOutcome): ResultMeta {
       body: 'نصب Headscale نیازمند دسترسی root/sudo است و روی این سرور در دسترس نیست (SUDO_REQUIRED). همهٔ مراحل قبل از اجرا — از جمله Dry-Run کامل — به‌صورت واقعی روی همین سرور راستی‌آزمایی شد؛ روی یک VPS واقعی با کاربر دارای sudo، همین برنامه بدون تغییر اجرا می‌شود. اگر سرور واقعی شماست: با کاربر دارای sudo وصل شوید، مرحلهٔ ۱ را دوباره بررسی کنید و اجرا را تکرار کنید.',
     }
   }
-  if (outcome.ok) {
-    switch (outcome.finalState) {
-      case 'verified':
-        return {
-          kind: 'success',
-          title: 'نصب انجام شد و صحت آن تأیید شد',
-          body: 'نصب‌کننده هر سه بررسی سلامت (سرویس، HTTPS و CLI) را با موفقیت پشت سر گذاشت. شبکهٔ شما آماده است.',
-        }
-      case 'full_success':
-        return {
-          kind: 'success',
-          title: 'نصب کاملاً موفق بود',
-          body: 'همهٔ گام‌ها با موفقیت تمام شد و سرویس روی سرور فعال است.',
-        }
-      case 'pending_verification':
-        return {
-          kind: 'pending',
-          title: 'نصب انجام شد؛ در انتظار تأیید DNS/گواهی',
-          body: 'نصب کامل شده اما DNS یا گواهی TLS هنوز به‌طور کامل پاسخ نمی‌دهد — این حالت تا چند دقیقه تا چند ساعت طبیعی است. بعداً سلامت را از داشبورد بررسی کنید.',
-        }
-      case 'service_not_ready':
-        return {
-          kind: 'pending',
-          title: 'نصب انجام شد اما سرویس هنوز آماده نیست',
-          body: 'سرویس نصب شده ولی بررسی سلامت نهایی پاسخ نداد. لاگ کامل و بخش «سرور و لاگ» را ببینید؛ دستور hsctl doctor روی سرور علت دقیق را می‌گوید.',
-        }
-      default:
-        return {
-          kind: 'success',
-          title: 'نصب با موفقیت تمام شد',
-          body: outcome.summary || 'کد خروج ۰ — نصب‌کننده بدون خطا تمام شد.',
-        }
-    }
-  }
+  // وضعیت نهایی واقعی نصب‌کننده ملاک دسته‌بندی است، نه فقط پرچم ok —
+  // hsctl برای pending_verification و service_not_ready «کد خروج ۴» برمی‌گرداند
+  // (قرارداد FACTS §10)؛ این دو یعنی نصب انجام شده و فقط تأیید بیرونی/سرویس
+  // در انتظار است — نه اینکه نصب شکست خورده باشد (اصلاح تسک ۲۶).
   switch (outcome.finalState) {
+    case 'verified':
+      return {
+        kind: 'success',
+        title: 'نصب انجام شد و صحت آن تأیید شد',
+        body: 'نصب‌کننده هر سه بررسی سلامت (سرویس، HTTPS و CLI) را با موفقیت پشت سر گذاشت. شبکهٔ شما آماده است.',
+      }
+    case 'full_success':
+      return {
+        kind: 'success',
+        title: 'نصب کاملاً موفق بود',
+        body: 'همهٔ گام‌ها با موفقیت تمام شد و سرویس روی سرور فعال است.',
+      }
+    case 'pending_verification':
+      return {
+        kind: 'pending',
+        title: 'نصب انجام شد؛ در انتظار تأیید DNS/گواهی',
+        body: 'همهٔ گام‌های نصب اجرا شد و سرویس فعال است؛ فقط تأیید بیرونی (DNS یا گواهی TLS) در پایان نصب پاسخ نداد. اگر نصب تازه است، صدور گواهی Let\u2019s Encrypt معمولاً چند دقیقه طول می‌کشد — چند دقیقه بعد سلامت سه‌لایه را از داشبورد بررسی کنید یا روی سرور hsctl doctor را اجرا کنید.',
+      }
+    case 'service_not_ready':
+      return {
+        kind: 'pending',
+        title: 'نصب انجام شد اما سرویس هنوز آماده نیست',
+        body: 'نصب کامل شده ولی سرویس در پایانِ نصب بالا نیامد. لاگ کامل و بخش «سرور و لاگ» را ببینید؛ روی سرور دستور hsctl doctor علت دقیق را می‌گوید.',
+      }
     case 'partial_failure':
       return {
         kind: 'partial',
@@ -93,6 +87,13 @@ export function classifyOutcome(outcome: JobOutcome): ResultMeta {
         body: 'نصب ناتمام ماند اما همهٔ جزئیات ثبت شده است. خروجی کامل را ببینید و روی سرور دستور hsctl doctor را اجرا کنید.',
       }
     default:
+      if (outcome.ok) {
+        return {
+          kind: 'success',
+          title: 'نصب با موفقیت تمام شد',
+          body: outcome.summary || 'کد خروج ۰ — نصب‌کننده بدون خطا تمام شد.',
+        }
+      }
       return {
         kind: 'failed',
         title: 'نصب ناتمام ماند',

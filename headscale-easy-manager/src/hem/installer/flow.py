@@ -69,6 +69,52 @@ RESUME_SKIP = {"welcome", "preflight", "prereq", "resources", "gather", "validat
 #   partial_failure     → بخشی از گام‌ها شکست خورد
 FINAL_STATES = ("verified", "service_not_ready", "pending_verification", "partial_failure", "full_success")
 
+# پنجرهٔ تلاش مجدد چک بیرونی HTTPS (اصلاح تسک ۲۶) — صدور گواهی Let's Encrypt
+# روی نصبِ تازه معمولاً چند ده ثانیه پس از راه‌اندازی Caddy طول می‌کشد؛ چکِ
+# تک‌تیریِ بلافاصله بعد از استارت، نصبِ کاملاً سالم را به‌اشتباه
+# «تأییدنشده» (کد ۴) گزارش می‌کرد. معیار موفقیت همان پاسخ ۲۰۰ است — فقط
+# پنجرهٔ منصفانه‌ای برای برقرارشدنش داده می‌شود؛ خطا نادیده گرفته نمی‌شود.
+HTTPS_RETRY_ATTEMPTS = 6   # جمعاً ~۲ دقیقه پنجره (هر تلاش + فاصلهٔ ۱۵ ثانیه‌ای)
+HTTPS_RETRY_DELAY = 15.0
+LOCAL_RETRY_ATTEMPTS = 3   # سرویس همین حالا start شده؛ چند تلاش کوتاه
+LOCAL_RETRY_DELAY = 5.0
+
+# تست‌ها این را با no-op جایگزین می‌کنند تا پنجرهٔ تلاش مجدد تست را کند نکند.
+_sleep = time.sleep
+
+
+def _probe_http(url: str, attempts: int, delay: float) -> tuple[bool, str]:
+    """GET با تلاش مجدد — (پاسخ‌گرفته، آخرین خطا) را برمی‌گرداند.
+
+    فقط لایهٔ شبکه/HTTP را می‌سنجد و نتیجه را جعل نمی‌کند: اگر پس از همهٔ
+    تلاش‌ها هم پاسخ ۲۰۰ نیامد، همان شکست واقعی برگردانده می‌شود تا وضعیت
+    «تأییدنشده» صادقانه بماند.
+    """
+    import urllib.request
+
+    last_error = ""
+    for attempt in range(1, attempts + 1):
+        try:
+            with urllib.request.urlopen(url, timeout=15) as resp:
+                if resp.status == 200:
+                    return True, ""
+                last_error = f"HTTP {resp.status}"
+        except OSError as exc:
+            last_error = str(exc) or exc.__class__.__name__
+        if attempt < attempts:
+            print(
+                "  "
+                + fmt(
+                    "http_retry_wait",
+                    err=last_error,
+                    n=attempt + 1,
+                    total=attempts,
+                    delay=int(delay),
+                )
+            )
+            _sleep(delay)
+    return False, last_error
+
 
 class InstallCancelled(RuntimeError):
     """کاربر نصب را لغو کرد."""
@@ -254,6 +300,17 @@ class InstallFlow:
         if final_state == "pending_verification":
             # یادداشت صادقانه: تا آماده‌شدن DNS/گواهی، دسترسی بیرونی تأییدنشده است.
             print(f"  {fmt('final_pending_note')}")
+            # علت دقیق، بررسیِ شکست‌خورده و دستور رفع (اصلاح تسک ۲۶) —
+            # «تأییدنشده» بدون دلیل بیان نمی‌شود.
+            h = self.state.data.get("health") or {}
+            if h.get("use_https") and not h.get("https_ok"):
+                https_url = h.get("https_url") or f"https://{self.answers.domain}/health"
+                print("  " + fmt("final_pending_reason_https", url=https_url,
+                                err=h.get("https_error") or "—"))
+                print("  " + fmt("final_pending_fix_https", url=https_url))
+            if self.state.data.get("dns_ok") is not True:
+                print("  " + fmt("final_pending_reason_dns"))
+                print("  " + fmt("final_pending_fix_dns"))
         if final_state == "service_not_ready":
             print("  وضعیت سرویس: systemctl status headscale   |   عیب‌یابی: hsctl doctor")
         print("  وضعیت کامل: hsctl status   |   عیب‌یابی: hsctl doctor")
@@ -692,34 +749,42 @@ class InstallFlow:
         local_ok = False
         https_ok = False
         hs_health_ok = False
+        local_error = ""
+        https_error = ""
         if self.dry_run:
             print(f"[dry-run] تست سلامت محلی: {local_url}")
             if self.answers.use_https:
                 print(f"[dry-run] تست سلامت بیرونی: {external_url}")
             print(f"[dry-run] ساخت اولین کاربر (در صورت نبود): {self.answers.first_user}")
         else:
-            import urllib.request
-
-            # چک محلی — در هر دو حالت (با/بدون HTTPS) سرور باید روی پورت محلی جواب بدهد
-            try:
-                with urllib.request.urlopen(local_url, timeout=15) as resp:
-                    local_ok = resp.status == 200
-            except OSError as exc:
-                print(f"  ⚠ پاسخ {local_url} دریافت نشد ({exc}).")
+            # چک محلی — در هر دو حالت (با/بدون HTTPS) سرور باید روی پورت محلی جواب بدهد.
+            # چند تلاش کوتاه: سرویس همین حالا start شده و ممکن است چند ثانیه‌ای طول بکشد.
+            local_ok, local_error = _probe_http(
+                local_url, LOCAL_RETRY_ATTEMPTS, LOCAL_RETRY_DELAY
+            )
             if local_ok:
                 print(f"  ✓ سلامت محلی ({local_url}) درست بود.")
-            # چک بیرونی — فقط در حالت HTTPS معنا دارد
+            else:
+                print(
+                    f"  ⚠ پاسخ {local_url} پس از {LOCAL_RETRY_ATTEMPTS} تلاش "
+                    f"دریافت نشد ({local_error})."
+                )
+            # چک بیرونی — فقط در حالت HTTPS معنا دارد؛ با پنجرهٔ تلاش مجدد
+            # (اصلاح تسک ۲۶): گواهی Let's Encrypt روی نصب تازه معمولاً تا
+            # ~۲ دقیقه پس از استارت Caddy صادر می‌شود — چک تک‌تیری، نصبِ
+            # سالم را به‌اشتباه «تأییدنشده» (کد ۴) می‌کرد.
             if self.answers.use_https:
-                try:
-                    with urllib.request.urlopen(external_url, timeout=15) as resp:
-                        https_ok = resp.status == 200
-                except OSError as exc:
-                    print(
-                        f"  ⚠ پاسخ {external_url} دریافت نشد ({exc}) — "
-                        "اگر نصب تازه است، صدور گواهی چند دقیقه طول می‌کشد."
-                    )
+                https_ok, https_error = _probe_http(
+                    external_url, HTTPS_RETRY_ATTEMPTS, HTTPS_RETRY_DELAY
+                )
                 if https_ok:
                     print(f"  ✓ سلامت بیرونی ({external_url}) درست بود.")
+                else:
+                    print(
+                        f"  ⚠ پاسخ {external_url} پس از {HTTPS_RETRY_ATTEMPTS} تلاش "
+                        "دریافت نشد — اگر نصب تازه است، صدور گواهی چند دقیقه "
+                        "طول می‌کشد."
+                    )
             try:
                 print("  " + ctl.health().strip().replace("\n", "\n  ")[:500])
                 hs_health_ok = True
@@ -742,9 +807,13 @@ class InstallFlow:
             "simulated": self.dry_run,
             "local_url": local_url,
             "local_ok": local_ok,
+            "local_error": "" if local_ok else (local_error or "unknown"),
             "use_https": bool(self.answers.use_https),
             "https_url": external_url if self.answers.use_https else "",
             "https_ok": https_ok,
+            "https_error": ""
+            if (not self.answers.use_https) or https_ok
+            else (https_error or "unknown"),
             "hs_health_ok": hs_health_ok,
             "service_active": (not self.dry_run) and services.service_active(C.HEADSCALE_UNIT),
             "dns_ok": self.state.data.get("dns_ok"),
@@ -817,11 +886,15 @@ class InstallFlow:
                     f"  - سلامت محلی ({h.get('local_url') or '—'}): "
                     f"{'۲۰۰' if h.get('local_ok') else 'ناموفق'}"
                 )
+                if not h.get("local_ok") and h.get("local_error"):
+                    lines.append(f"    - آخرین خطا: {h['local_error']}")
                 if h.get("use_https"):
                     lines.append(
                         f"  - سلامت بیرونی ({h.get('https_url') or '—'}): "
                         f"{'۲۰۰' if h.get('https_ok') else 'ناموفق/در انتظار'}"
                     )
+                    if not h.get("https_ok") and h.get("https_error"):
+                        lines.append(f"    - آخرین خطا: {h['https_error']}")
                 else:
                     lines.append("  - سلامت بیرونی: (حالت بدون HTTPS — بررسی بیرونی انجام نمی‌شود)")
                 lines.append(
@@ -830,7 +903,8 @@ class InstallFlow:
                 )
                 if h.get("use_https") and not h.get("https_ok"):
                     lines.append(
-                        "  - توجه: دسترسی از بیرون «تأییدنشده» است تا آماده‌شدن DNS/گواهی TLS."
+                        "  - توجه: دسترسی از بیرون «تأییدنشده» است تا آماده‌شدن DNS/گواهی TLS؛"
+                        " اگر نصب تازه است، صدور گواهی معمولاً چند دقیقه طول می‌کشد."
                     )
         if not self.dry_run:
             report_dir.mkdir(parents=True, exist_ok=True)

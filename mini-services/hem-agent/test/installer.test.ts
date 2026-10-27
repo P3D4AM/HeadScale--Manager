@@ -16,7 +16,7 @@ import {
   listenStackIo,
   type TestStack,
 } from "./helpers";
-import { PLAN_INPUTS, renderAnswersConf, validateSettings } from "../src/installer";
+import { PLAN_INPUTS, installJobSummary, renderAnswersConf, validateSettings } from "../src/installer";
 import { detectFinalState, parseStepLine } from "../src/jobstream";
 import {
   installerRootCandidates,
@@ -162,6 +162,45 @@ test("detectFinalState: the contractual 5-b labels", () => {
   expect(detectFinalState("بازگشت به نسخهٔ قبلی (0.29.5) کامل شد و سرویس سالم است.")).toBe("rolled_back");
   expect(detectFinalState("✗ بازگشت به نسخهٔ قبلی هم ناموفق بود!")).toBe("rollback_failed");
   expect(detectFinalState("چیزی مطابقت ندارد")).toBeNull();
+});
+
+// Task 26 — exit 4 must not be flattened to "install incomplete": the summary
+// describes what the REAL hsctl exit code means (finalState comes verbatim from
+// detectFinalState over the real installer output).
+test("installJobSummary: exit 4 + pending_verification is a completed install, not an incomplete one", () => {
+  const s = installJobSummary(4, "pending_verification");
+  expect(s).toContain("نصب انجام شد");
+  expect(s).toContain("همهٔ گام‌های نصب موفق بودند");
+  expect(s).toContain("کد خروج ۴");
+  expect(s).toContain("تأیید بیرونی");
+  expect(s).toContain("hsctl doctor");
+  // the misleading old text is exactly what the user reported — it must be gone
+  expect(s).not.toContain("نصب ناتمام ماند");
+});
+
+test("installJobSummary: exit 4 + service_not_ready names the service problem and the fix command", () => {
+  const s = installJobSummary(4, "service_not_ready");
+  expect(s).toContain("سرویس در پایان نصب آماده نبود");
+  expect(s).toContain("کد خروج ۴");
+  expect(s).toContain("systemctl status headscale");
+  expect(s).toContain("hsctl doctor");
+  expect(s).not.toContain("نصب ناتمام ماند");
+});
+
+test("installJobSummary: real failures keep the honest incomplete text with the failing step", () => {
+  const s = installJobSummary(1, "partial_failure", "فعال‌سازی سرویس");
+  expect(s).toContain("نصب ناتمام ماند (کد خروج 1)");
+  expect(s).toContain("آخرین گام مشکل‌دار: فعال‌سازی سرویس");
+  expect(s).toContain("hsctl doctor");
+  // without a parsed step it still tells the exit code honestly
+  expect(installJobSummary(2, undefined)).toContain("نصب ناتمام ماند (کد خروج 2)");
+});
+
+test("installJobSummary: exit 0 keeps the success text with the final state", () => {
+  const s = installJobSummary(0, "full_success");
+  expect(s).toContain("نصب با کد خروج ۰ تمام شد");
+  expect(s).toContain("full_success");
+  expect(s).not.toContain("نصب ناتمام ماند");
 });
 
 // ---------------------------------------------------------------------------

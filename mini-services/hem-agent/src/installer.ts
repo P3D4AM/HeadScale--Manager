@@ -227,6 +227,50 @@ function firstUserDefault(s: InstallSettings): string {
 }
 
 // ---------------------------------------------------------------------------
+// End-of-install summary (contract §8 + task 26 fix).
+// The exit code is propagated verbatim from the real install.sh/hsctl; the
+// summary must describe what that code MEANS instead of flattening every
+// non-zero exit to "install incomplete":
+//   0                        → success (verified / full_success)
+//   4 + pending_verification → all install steps ran, service is up, but the
+//                              external DNS/TLS check did not answer yet (fresh
+//                              Let's Encrypt issuance usually takes a few
+//                              minutes) — NOT an incomplete install.
+//   4 + service_not_ready    → install finished but the service was not ready.
+//   anything else            → genuinely incomplete; name the failing step.
+// ---------------------------------------------------------------------------
+export function installJobSummary(
+  code: number | null,
+  finalState: string | null | undefined,
+  failedTitle?: string,
+): string {
+  if (code === 0) {
+    return `نصب با کد خروج ۰ تمام شد${finalState ? ` (وضعیت نهایی: ${finalState})` : ""}.`;
+  }
+  if (code === null) {
+    // process ended without an exit code (killed/lost) — honest fallback
+    return `نصب بدون کد خروج مشخص پایان یافت${failedTitle ? ` — آخرین گام مشکل‌دار: ${failedTitle}` : ""}. خروجی کامل را ببینید؛ پیشنهاد: hsctl doctor`;
+  }
+  if (finalState === "pending_verification") {
+    const stepsNote = failedTitle
+      ? ` (آخرین گام مشکل‌دار: ${failedTitle})`
+      : " (همهٔ گام‌های نصب موفق بودند)";
+    return (
+      `نصب انجام شد${stepsNote}؛ اما در پایان نصب، تأیید بیرونی DNS/گواهی TLS هنوز پاسخ نداد (کد خروج ۴).` +
+      " اگر نصب تازه است، صدور گواهی معمولاً چند دقیقه طول می‌کشد — چند دقیقه بعد سلامت را از داشبورد بررسی کنید" +
+      " یا روی سرور hsctl doctor را اجرا کنید."
+    );
+  }
+  if (finalState === "service_not_ready") {
+    return (
+      `نصب انجام شد اما سرویس در پایان نصب آماده نبود (کد خروج ۴)${failedTitle ? ` — آخرین گام مشکل‌دار: ${failedTitle}` : ""}.` +
+      " وضعیت سرویس: systemctl status headscale | عیب‌یابی: hsctl doctor"
+    );
+  }
+  return `نصب ناتمام ماند (کد خروج ${code})${failedTitle ? ` — آخرین گام مشکل‌دار: ${failedTitle}` : ""}. پیشنهاد: hsctl doctor`;
+}
+
+// ---------------------------------------------------------------------------
 // Render answers.conf — exactly the key layout of examples/hem-install.conf.example
 // ---------------------------------------------------------------------------
 const YAML_SAFE_SCALAR_RE = /^[A-Za-z0-9_/.][A-Za-z0-9_.@:/-]*$/; // starting with / is allowed (paths)
@@ -532,10 +576,9 @@ async function runInstallJob(
     const finalState = detectFinalState(r.stdout + "\n" + r.stderr) ?? undefined;
     const steps = streamer.steps();
     const failed = steps.find((st) => st.status === "failed" || st.status === "needs_action");
-    const summary =
-      r.code === 0
-        ? `نصب با کد خروج ۰ تمام شد${finalState ? ` (وضعیت نهایی: ${finalState})` : ""}.`
-        : `نصب ناتمام ماند (کد خروج ${r.code})${failed ? ` — آخرین گام مشکل‌دار: ${failed.title}` : ""}. پیشنهاد: hsctl doctor`;
+    // State-aware honest summary (task 26): exit 4 + pending_verification means
+    // the install itself completed — it must NOT be reported as "incomplete".
+    const summary = installJobSummary(r.code, finalState, failed?.title);
     jobs.jobDone(jobId, r.code === 0, r.code, summary, finalState);
     deps.audit.log({
       sessionId,
