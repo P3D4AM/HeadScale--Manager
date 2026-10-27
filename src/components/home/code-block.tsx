@@ -18,8 +18,12 @@ const LANG_MAP: Record<string, string> = {
   console: 'bash',
   yml: 'yaml',
   py: 'python',
-  'powershell': 'powershell',
+  powershell: 'powershell',
   ps1: 'powershell',
+  cmd: 'batch',
+  bat: 'batch',
+  batch: 'batch',
+  dos: 'batch',
 }
 
 export function normalizeLang(lang?: string): string {

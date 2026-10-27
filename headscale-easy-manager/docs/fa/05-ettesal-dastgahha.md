@@ -73,7 +73,7 @@ icon: "Smartphone"
 
 ### اتصال به سرور خودتان
 
-برنامه را نصب کرده و اجرا کنید، سپس **PowerShell** را باز کنید (از منوی Start تایپ کنید `powershell` و Enter):
+برنامه را نصب کرده و اجرا کنید، سپس **PowerShell** را باز کنید (از منوی Start تایپ کنید `powershell` و Enter — CMD هم همین کار را می‌کند):
 
 ```powershell
 tailscale login --login-server https://headscale.example.com
@@ -81,10 +81,12 @@ tailscale login --login-server https://headscale.example.com
 
 توضیح خط‌به‌خط:
 
-- `tailscale` : فرمان کلاینت (بعد از نصب، در PATH ویندوز هست)
+- `tailscale` : فرمان کلاینت Tailscale در ویندوز (اگر پیام شناخته‌نشدن گرفتید: پنجرهٔ ترمینال را ببندید و دوباره باز کنید، یا با مسیر کامل اجرا کنید — بخش ۴.۰)
 - `login` : عملیات «عضویت در یک سرور»
 - `--login-server` : «به‌جای سرور پیش‌فرض Tailscale، به این سرور وصل شو»
 - `https://headscale.example.com` : آدرس سرور شما
+
+اجرای این دستور به Administrator نیاز ندارد (کلاینت ویندوزی از طریق سرویس خودش کار می‌کند)؛ اگر خطای دسترسی گرفتید، PowerShell را مدیریتی باز کنید (بخش ۴.۰). راهنمای کامل نصب و اتصال ویندوزی، از جمله روش آفلاین و عیب‌یابی: [فصل هفدهم](17-ettesal-windows-tailscale.md).
 
 مرورگر باز می‌شود و صفحهٔ تأیید سرور شما را می‌بیند — ادامه در بخش ۵.۶.
 
@@ -177,10 +179,16 @@ to your network:
 headscale auth register --auth-id 01234567-89ab-cdef-0123-456789abcdef --user USERNAME
 ```
 
-**قدم ۳ — روی سرور همان دستور را اجرا کنید:** وارد SSH سرور شوید (فصل چهارم) و دستور را با مقادیر واقعی اجرا کنید — فقط به‌جای `USERNAME` نام کاربر شبکهٔ خودتان را بگذارید:
+**قدم ۳ — روی سرور همان دستور را اجرا کنید:** وارد SSH سرور شوید (فصل چهارم) و دستور را با مقادیر واقعی اجرا کنید — فقط به‌جای `USERNAME` نام کاربر شبکهٔ خودتان را بگذارید (روی سرور):
 
 ```bash
 headscale auth register --user admin --auth-id <AUTH_ID>
+```
+
+از ویندوز، معادل یک‌خطی (بخش ۴.۰):
+
+```powershell
+ssh ubuntu@203.0.113.10 "headscale auth register --user admin --auth-id <AUTH_ID>"
 ```
 
 توضیح خط‌به‌خط:
@@ -204,13 +212,13 @@ Node laptop-ali registered
 
 اگر نمی‌خواهید هر دستگاه را با جریان مرورگر تأیید کنید (مثلاً ده‌ها دستگاه دارید یا از راه دور به دستگاه دسترسی ندارید)، **کلید از پیش تأییدشده (Preauth Key)** راه‌حل است: روی سرور یک کلید می‌سازید، آن را یک بار روی دستگاه وارد می‌کنید؛ دستگاه بدون سؤال و جواب عضو می‌شود.
 
-**روی سرور — ساخت کلید برای کاربر `admin`:**
+**روی سرور — ساخت کلید برای کاربر `admin`** (از ویندوز: نشست SSH یا الگوی یک‌خطی بخش ۴.۰):
 
 ```bash
 hsctl preauth create admin
 ```
 
-یا با دستور خام headscale. ⚠️ دقت: در این دستور، `--user` **شناسهٔ عددی کاربر** است نه نامش! اول با `headscale users list` ستون ID کاربر را ببینید، بعد مثلاً برای کاربری با شناسهٔ `1`:
+یا با دستور خام headscale (باز هم روی سرور). ⚠️ دقت: در این دستور، `--user` **شناسهٔ عددی کاربر** است نه نامش! اول با `headscale users list` ستون ID کاربر را ببینید، بعد مثلاً برای کاربری با شناسهٔ `1`:
 
 ```bash
 headscale preauthkeys create --user 1
@@ -223,6 +231,12 @@ tskey-auth-<AUTH_KEY>
 ```
 
 **روی دستگاه — اتصال با کلید:**
+
+- ویندوز (PowerShell یا CMD — بدون sudo؛ دربارهٔ فرمان `tailscale` در ویندوز: بخش ۴.۰):
+
+```powershell
+tailscale up --login-server https://headscale.example.com --authkey <AUTH_KEY>
+```
 
 - لینوکس:
 
@@ -252,9 +266,15 @@ sudo tailscale up --login-server https://headscale.example.com --authkey <AUTH_K
 
 ### IP دستگاه شما در شبکهٔ VPN
 
-روی دستگاهی که وصل شده:
+روی دستگاهی که وصل شده — لینوکس:
 
 ```bash
+tailscale ip -4
+```
+
+روی ویندوز (PowerShell یا CMD) همان دستور بدون تغییر:
+
+```powershell
 tailscale ip -4
 ```
 
@@ -268,9 +288,17 @@ tailscale ip -4
 
 ### تست اتصال بین دو دستگاه
 
-از دستگاه اول، دستگاه دوم را پینگ کنید (به‌جای نام، IP دوم را هم می‌توانید بگذارید):
+از دستگاه اول، دستگاه دوم را پینگ کنید (به‌جای نام، IP دوم را هم می‌توانید بگذارید) — این دستور روی لینوکس و ویندوز یکسان است:
+
+روی لینوکس:
 
 ```bash
+tailscale ping my-laptop
+```
+
+روی ویندوز (PowerShell یا CMD):
+
+```powershell
 tailscale ping my-laptop
 ```
 
@@ -284,7 +312,15 @@ pong from my-laptop (100.64.0.3) via 203.0.113.45:41231 in 18ms
 
 ### وضعیت کلی
 
+روی لینوکس:
+
 ```bash
+tailscale status
+```
+
+روی ویندوز (PowerShell یا CMD):
+
+```powershell
 tailscale status
 ```
 
@@ -300,7 +336,7 @@ tailscale status
 
 ## ۵.۹ قطع و وصل‌کردن اتصال
 
-روی دستگاه‌های لینوکسی/ترمینال‌دار:
+روی دستگاه‌های لینوکسی:
 
 ```bash
 sudo tailscale down
@@ -314,7 +350,14 @@ sudo tailscale up
 
 (وصل مجدد — دقت کنید: **دیگر لازم نیست `--login-server` بدهید**؛ سرور در دستگاه ذخیره شده و فقط همین دستور کوتاه کافی است)
 
-روی اندروید و ویندوز همین کار از رابط گرافیکی برنامه (کلید روشن/خاموش) انجام می‌شود.
+روی ویندوز، همین دو دستور بدون `sudo` در PowerShell/CMD کار می‌کنند:
+
+```powershell
+tailscale down
+tailscale up
+```
+
+روی اندروید و ویندوز، همین کار از رابط گرافیکی برنامه (کلید روشن/خاموش) هم انجام می‌شود.
 
 > آیا تا اینجا می‌توانید CRM دفتر را باز کنید؟ **هنوز نه** — چون دستگاهی داخل دفتر هنوز «پل» نشده است. دقیقاً همین کار فصل بعد است.
 
@@ -322,12 +365,12 @@ sudo tailscale up
 
 - «آدرس سرور کنترل» (`https://headscale.example.com`) فقط برای عضویت است؛ «آدرس CRM» (`192.168.1.220:800`) برای کار روزمره. این دو را قاطی نکنید.
 - اندروید: کلاینت رسمی Tailscale از Play/F-Droid + مسیر Settings → Accounts → ⋮ → Use an alternate server.
-- ویندوز: کلاینت رسمی از tailscale.com/download + دستور `tailscale login --login-server ...` در PowerShell.
+- ویندوز: کلاینت رسمی از tailscale.com/download + دستور `tailscale login --login-server ...` در PowerShell (بدون نیاز به Administrator؛ اگر فرمان شناخته نشد: بخش ۴.۰)؛ راهنمای کامل: فصل هفدهم.
 - لینوکس: نصب با `curl -fsSL https://tailscale.com/install.sh | sh` و اتصال با `sudo tailscale up --login-server ...`.
 - macOS/iOS: کاملاً پشتیبانی می‌شوند؛ راهنمای رسمی روی خود سرور شما: `https://دامنه/apple` (و `/windows`).
 - تأیید دستگاه تازه: دستگاه آدرس می‌دهد ← مرورگر `AUTH_ID` نشان می‌دهد ← روی سرور `headscale auth register --user admin --auth-id <AUTH_ID>`.
 - راه سریع‌تر: `hsctl preauth create admin` روی سرور و `--authkey <AUTH_KEY>` روی دستگاه.
-- ابزارهای روزمره: `tailscale ip -4`، `tailscale ping <نام-یا-IP>` و `tailscale status`؛ قطع/وصل با `tailscale down` / `tailscale up`.
+- ابزارهای روزمره: `tailscale ip -4`، `tailscale ping <نام-یا-IP>` و `tailscale status` — هر سه در لینوکس و ویندوز یکسان؛ قطع/وصل با `tailscale down` / `tailscale up` (در ویندوز بدون sudo).
 - کلید از پیش تأییدشده را می‌توان از CLI (`hsctl preauth create`) یا از رابط گرافیکی (بخش «کلیدها») ساخت؛ در هر دو، نمایش کامل فقط یک‌بار است.
 
 همهٔ دستگاه‌های شخصی وصل‌اند؛ حالا وقت ساخت «پل دفتر» است تا از هر جای دنیا به CRM برسیم: [فصل ششم: دسترسی از بیرون به شبکه دفتر](06-dastresi-shabake-daftar.md)
