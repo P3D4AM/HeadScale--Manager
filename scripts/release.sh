@@ -91,7 +91,7 @@ git archive HEAD:headscale-easy-manager | tar -xf - -C "$PKG_ROOT/headscale-easy
 
 # 4-5) Project top-level files
 for f in package.json bun.lock next.config.ts tsconfig.json tailwind.config.ts \
-  postcss.config.mjs components.json eslint.config.mjs README-FA.md; do
+  postcss.config.mjs components.json eslint.config.mjs README.md README-FA.md; do
   [ -f "$f" ] || die "required allowlist file not found: $f"
   cp "$f" "$PKG_ROOT/$f"
 done

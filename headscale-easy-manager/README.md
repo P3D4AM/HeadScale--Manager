@@ -1,151 +1,153 @@
 # Headscale Easy Manager
 
-**برنامهٔ ویندوزی فارسی + نصب‌کنندهٔ هوشمند + مدیر CLI + ۱۷ فصل آموزش فارسی، برای راه‌اندازی شبکهٔ خصوصی مبتنی بر Headscale**
+> Languages: **English** · [فارسی (Persian)](README-fa.md)
 
-این محصول برای کسانی ساخته شده که می‌خواهند شبکهٔ خصوصی خودشان را با Headscale (نسخهٔ مستقل و متن‌باز سرور کنترل Tailscale) روی یک VPS راه بیندازند — بدون آنکه متخصص لینوکس، شبکه یا VPN باشند.
+**A Persian-language Windows app + smart installer + CLI manager + a 17-chapter Persian tutorial, for setting up a Headscale-based private network**
 
-> **نسخهٔ هدف:** Headscale **v0.29.5** (راستی‌آزمایی‌شده از سورس رسمی) — همه حقایق فنی پروژه در [`docs/FACTS.md`](docs/FACTS.md) مستند است.
+This product is built for people who want to run their own private network with Headscale (the open-source, self-hosted Tailscale control server) on a VPS — without being a Linux, networking, or VPN expert.
 
-## محصول از چه چیزهایی ساخته شده؟
+> **Target version:** Headscale **v0.29.5** (verified against the official source) — every technical fact of the project is documented in [`docs/FACTS.md`](docs/FACTS.md).
 
-| جزء | کدِ بخش | کارش چیست؟ |
+## What is the product made of?
+
+| Component | Where the code lives | What it does |
 |---|---|---|
-| **برنامهٔ ویندوزی** (exe) | `mini-services/hem-agent/` در محیط توسعه | عامل محلی + رابط وب فارسی؛ از طریق **SSH واقعی** سرور را مدیریت می‌کند |
-| **نصب‌کنندهٔ سرور** | همین مخزن (`install.sh` + `src/hem/`) | نصب از صفر تا سرور فعال روی اوبونتو — منبع واحد نصب (رابط گرافیکی هم همین را اجرا می‌کند) |
-| **مدیر CLI** (`hsctl`) | همین مخزن | مدیریت روزمره روی خود سرور |
-| **مستندات فارسی** | `docs/fa/` (۱۷ فصل) | آموزش مبتدی‌پسند؛ داخل CLI (`hsctl learn`)، داخل برنامهٔ ویندوزی و همین‌جا قابل خواندن |
+| **Windows app** (exe) | `mini-services/hem-agent/` in the dev environment | The local agent + Persian web UI; manages the server over **real SSH** |
+| **Server installer** | this repo (`install.sh` + `src/hem/`) | Installs from scratch to a working server on Ubuntu — the single source of installation truth (the GUI runs exactly this) |
+| **CLI manager** (`hsctl`) | this repo | Day-to-day management on the server itself |
+| **Persian docs** | `docs/fa/` (17 chapters) | Beginner-friendly tutorial; readable in the CLI (`hsctl learn`), inside the Windows app, and right here |
 
-> **صادقانه:** بستهٔ exe امضای دیجیتال ندارد؛ اولین اجرا ممکن است SmartScreen ویندوز پیام بدهد (More info → Run anyway). راهنمای کامل: [فصل پانزدهم](docs/fa/15-barnameh-windows.md).
+> **Honesty note:** the exe package has no digital signature; on first run Windows SmartScreen may show a warning (More info → Run anyway). Full guide: [chapter 15](docs/fa/15-barnameh-windows.md).
 
-## چه کاری برای شما انجام می‌دهد؟
+## What does it do for you?
 
-- ✅ **نصب با چند کلیک یا یک دستور:** از یک VPS خام اوبونتو تا سرور Headscale فعال با HTTPS معتبر
-- ✅ **برنامهٔ ویندوزی با رابط فارسی:** اتصال SSH واقعی (اثرانگشت میزبان/TOFU)، ویزارد نصب ۵ مرحله‌ای، مدیریت کاربران/دستگاه‌ها/کلیدها/مسیرها/سیاست/پیکربندی، پشتیبان و ارتقا — همه با نتیجهٔ صادقانه
-- ✅ **بررسی پیش‌نیازها:** سیستم‌عامل، معماری، دیسک، RAM، پورت‌های اشغال‌شده، سرویس‌های موجود
-- ✅ **احترام به سرور موجود:** Caddy/Headscale از قبل نصب‌شده تشخیص داده می‌شود؛ قبل از هر تغییری پشتیبان گرفته می‌شود
-- ✅ **فایروال امن:** پورت SSH شما همیشه اول مجاز می‌شود
-- ✅ **دسترسی به شبکهٔ دفتر:** راهنمای گام‌به‌گام Subnet Router (فصل ۶) و دوربین‌های مداربسته (فصل ۱۳)
-- ✅ **مرکز آموزش فارسی:** ۱۷ فصل مبتدی‌پسند (`hsctl learn` یا بخش «آموزش» برنامهٔ ویندوزی)
+- ✅ **Install with a few clicks or one command:** from a bare Ubuntu VPS to a working Headscale server with valid HTTPS
+- ✅ **A Windows app with a Persian UI:** real SSH connection (host-key fingerprint/TOFU), a 5-step install wizard, user/device/key/route/policy/config management, backup and upgrade — all with honest results
+- ✅ **Pre-flight checks:** OS, architecture, disk, RAM, occupied ports, existing services
+- ✅ **Respects an existing server:** a pre-installed Caddy/Headscale is detected; a backup is taken before any change
+- ✅ **A safe firewall:** your SSH port is always allowed first
+- ✅ **Office network access:** a step-by-step Subnet Router guide (chapter 6) and CCTV cameras (chapter 13)
+- ✅ **A Persian learning center:** 17 beginner-friendly chapters (`hsctl learn`, or the "Learn" section of the Windows app)
 
-## پیش‌نیازها (سمت سرور)
+## Prerequisites (server side)
 
-| مورد | جزئیات |
+| Item | Details |
 |---|---|
-| سرور (VPS) | Ubuntu Server 22.04 یا 24.04 LTS — amd64/arm64 — حداقل ۱GB RAM و ۱۰GB فضای آزاد — IP عمومی |
-| دامنه | یک زیردامنه (مثل `headscale.example.com`) با دسترسی DNS (رکورد A به IP سرور) |
-| دسترسی | اتصال SSH با کاربر دارای sudo |
-| کلاینت‌ها | اپ رسمی Tailscale (اندروید/iOS/ویندوز/macOS/لینوکس — رایگان) |
+| Server (VPS) | Ubuntu Server 22.04 or 24.04 LTS — amd64/arm64 — at least 1GB RAM and 10GB free disk — a public IP |
+| Domain | one subdomain (e.g. `headscale.example.com`) with DNS access (an A record pointing to the server IP) |
+| Access | an SSH login with a sudo-capable user |
+| Clients | the official Tailscale app (Android/iOS/Windows/macOS/Linux — free) |
 
-> Ubuntu 22.04 پشتیبانی رسمی دارد؛ Debian 12+ با هشدار «آزمایش‌نشده» قابل استفاده است.
+> Ubuntu 22.04 is officially supported; Debian 12+ works with an "untested" warning.
 
-## شروع سریع — پنج مسیر
+## Quick start — five paths
 
-### ۱) کاربر ویندوز (بدون هیچ دستوری)
+### 1) Windows user (zero commands)
 
-فایل `HeadscaleEasyManager-v<نسخه>-win64.zip` را از انتشار رسمی بگیرید، SHA-256 را با فایل `.sha256` کنارش تطبیق دهید، استخراج و `hem-manager.exe` را اجرا کنید (SmartScreen: **More info → Run anyway**). در برنامه: بخش «اتصال» → IP/پورت/کاربر/رمز یا کلید → تأیید اثر انگشت → بخش «نصب سرور». راهنمای کامل: [فصل پانزدهم](docs/fa/15-barnameh-windows.md).
+Grab `HeadscaleEasyManager-v<version>-win64.zip` from the official release, verify its SHA-256 against the `.sha256` file next to it, extract, and run `hem-manager.exe` (SmartScreen: **More info → Run anyway**). In the app: "Connect" section → IP/port/user/password or key → approve the host-key fingerprint → "Install server" section. Full guide: [chapter 15](docs/fa/15-barnameh-windows.md).
 
-### ۲) نصب سرور با CLI (مسیر کلاسیک)
+### 2) Server install with the CLI (the classic path)
 
-پس از ورود با SSH و دریافت همین مخزن:
+After logging in over SSH and fetching this repo:
 
 ```bash
 cd headscale-easy-manager
 sudo ./install.sh
 ```
 
-نصب‌کننده تعاملی است: دامنه می‌پرسد، DNS را بررسی می‌کند و در پایان گزارش کامل می‌دهد. حالت خودکار: `sudo ./install.sh --config hem-install.conf --non-interactive` (نمونه در `examples/`). تمرین بدون تغییر: `--dry-run`. آموزش کامل: [فصل چهارم](docs/fa/04-nasb-avvalieh.md).
+The installer is interactive: it asks for the domain, checks DNS, and prints a full report at the end. Unattended mode: `sudo ./install.sh --config hem-install.conf --non-interactive` (a sample config is in `examples/`). Practice without changing anything: `--dry-run`. Full tutorial: [chapter 4](docs/fa/04-nasb-avvalieh.md).
 
-### ۳) توسعه‌دهنده (محیط sandbox همین پروژه)
+### 3) Developer (this project's sandbox environment)
 
-سه سرویس باید روشن باشند (پورت‌ها از پیش‌فرض قابل تغییر):
+Three services must be running (ports can be changed from the defaults):
 
 ```bash
-# ۱) رابط وب (Next.js) — پورت 3000
+# 1) Web UI (Next.js) — port 3000
 bun run dev
-# ۲) عامل مدیریت (hem-agent) — پورت 3005
+# 2) Management agent (hem-agent) — port 3005
 cd mini-services/hem-agent && bun run dev
-# ۳) سرور SSH آزمایشی برای تست/دمو — پورت 2222 (کاربر z، رمز hemtest-pass)
+# 3) Test/demo SSH server — port 2222 (user z, password hemtest-pass)
 cd mini-services/hem-agent && bun run test-server
 ```
 
-قرارداد API/جریان‌ها: [`docs/AGENT-API.md`](docs/AGENT-API.md) — الزام‌آور برای agent و UI.
+The API/flow contract: [`docs/AGENT-API.md`](docs/AGENT-API.md) — binding for both the agent and the UI.
 
-### ۴) ساخت بستهٔ ویندوز
+### 4) Building the Windows package
 
 ```bash
 cd mini-services/hem-agent
-bash packaging/build-windows.sh          # یا: bun run package:windows
+bash packaging/build-windows.sh          # or: bun run package:windows
 ```
 
-خروجی زیر `packaging/dist/`: پوشهٔ `hem-manager/` (exe + ui + install/uninstall.ps1 + راهنمای فارسی)، `HeadscaleEasyManager-v<VER>-win64.zip` + `.sha256`، و باینری لینوکسیِ همان سورس که **به‌صورت زنده راستی‌آزمایی می‌شود** (UI، توکن، اتصال TOFU و exec واقعی SSH). ورودی UI از قبل ساخته‌شده را با `UI_OUT` بدهید؛ در نبودش، خودش UI را می‌سازد. جزئیات و انحراف‌های موجه: سراسرِ خود اسکریپت.
+Output under `packaging/dist/`: the `hem-manager/` folder (exe + ui + install/uninstall.ps1 + the Persian guide), `HeadscaleEasyManager-v<VER>-win64.zip` + `.sha256`, and a Linux binary of the same source that is **verified live** (UI, token, TOFU connection, and real SSH exec). Pass an already-built UI with `UI_OUT`; without it, the script builds the UI itself. Details and justified deviations: documented throughout the script itself.
 
-### ۵) ساخت انتشار کامل (release)
+### 5) Building a full release
 
 ```bash
-bash scripts/release.sh    # در ریشهٔ پروژهٔ بیرونی — مسیر انتشار v0.3.1
+bash scripts/release.sh    # from the outer project root — the v0.3.1 release path
 ```
 
-این اسکریپت release (مالکیت مسیر انتشار): تولید محتوای آموزش در زمان ساخت (`bun run docs:generate`)، گیت‌های تایپ/lint و بستهٔ انتشار تمیزِ مخزن (`download/headscale-easy-manager-v<VER>.tar.gz` + `.sha256`) با allowlist سخت‌گیرانه (بدون `.git`، `.env`، دیتابیس توسعه، کش‌ها و لاگ‌ها). بستهٔ ویندوز با مسیر ۴ (جدا) ساخته می‌شود.
+This script owns the release path: build-time learning-content generation (`bun run docs:generate`), type/lint gates, and a clean release package of the repo (`download/headscale-easy-manager-v<VER>.tar.gz` + `.sha256`) with a strict allowlist (no `.git`, no `.env`, no dev database, caches, or logs). The Windows package is built separately via path 4.
 
-## ابزار مدیریت روی سرور: `hsctl`
+## The on-server management tool: `hsctl`
 
-| دستور | کار |
+| Command | What it does |
 |---|---|
-| `hsctl status` / `hsctl doctor [--fix]` | وضعیت کلی / عیب‌یابی چهاربخشی |
-| `hsctl users create sara` / `hsctl devices list` | کاربران و دستگاه‌ها |
-| `hsctl preauth create admin --reusable --expiration 24h` | کلید اتصال (نمایش کامل فقط یک‌بار) |
-| `hsctl routes list` / `routes approve <id> --routes <CIDR>` | مسیرهای شبکهٔ دفتر |
-| `hsctl backup create` / `backup verify` / `restore` | پشتیبان و بازیابی |
-| `hsctl update --check` | ارتقای امن نسخه‌به‌نسخه |
-| `hsctl cameras add` / `check` | دوربین/NVR |
-| `hsctl learn list` / `hsctl learn 15` / `hsctl explain <topic>` | مرکز آموزش فارسی |
-| `hsctl report` | گزارش قابل‌ارسال (بدون اطلاعات حساس) |
+| `hsctl status` / `hsctl doctor [--fix]` | overall status / four-part diagnostics |
+| `hsctl users create sara` / `hsctl devices list` | users and devices |
+| `hsctl preauth create admin --reusable --expiration 24h` | a pre-auth key (the full value is shown exactly once) |
+| `hsctl routes list` / `routes approve <id> --routes <CIDR>` | office-network routes |
+| `hsctl backup create` / `backup verify` / `restore` | backup and restore |
+| `hsctl update --check` | a safe version-to-version upgrade |
+| `hsctl cameras add` / `check` | cameras/NVR |
+| `hsctl learn list` / `hsctl learn 15` / `hsctl explain <topic>` | the Persian learning center |
+| `hsctl report` | a shareable report (no sensitive data) |
 
-راهنمای کامل: `hsctl --help` و [فصل هشتم](docs/fa/08-modiriyat-roozmareh.md).
+Full reference: `hsctl --help` and [chapter 8](docs/fa/08-modiriyat-roozmareh.md).
 
-## امنیت
+## Security
 
-- دانلود بستهٔ Headscale فقط از ریلیز رسمی GitHub + راستی‌آزمایی **SHA-256** (در همهٔ مسیرها — حتی dry-run و ارتقا)
-- هیچ رمز/کلیدی در لاگ، خروجی یا گزارش چاپ نمی‌شود (لایهٔ محوسازی خودکار)؛ کلیدها فقط **یک‌بار** و پوشانده نمایش داده می‌شوند
-- عامل برنامهٔ ویندوزی فقط روی `127.0.0.1` گوش می‌دهد؛ با هر اجرا توکن تصادفی می‌سازد و رابط با `?token=…` باز می‌شود؛ **هیچ پورتی به اینترنت باز نمی‌کند**
-- اتصال با جریان دومرحله‌ای اثر انگشت (TOFU)؛ مغایرت کلید میزبان → توقف کامل با هشدر امنیتی (بدون راه عبور خودکار)
-- ذخیرهٔ رمز روی ویندوز فقط با رضایت شما و در Windows Credential Manager (پیش‌فرض: فقط حافظه)
-- کنسول برنامه فقط «دستورهای ازپیش‌مجاز» را اجرا می‌کند (پیش‌نمایش = عین فرمان) — بدون شل آزاد
-- هر عملیات مخرب نیازمند تأیید صریح است؛ همهٔ تغییرات در `/etc/hem/state.json` ثبت می‌شوند
-- جزئیات: [`SECURITY.md`](SECURITY.md)
+- The Headscale package is downloaded only from the official GitHub release + **SHA-256** verification (on every path — even dry-run and upgrade)
+- No password or key is ever printed to logs, output, or reports (an automatic redaction layer); keys are shown **once** and masked
+- The Windows app's agent listens only on `127.0.0.1`; it generates a random token on every run and the UI opens with `?token=…`; **it never opens a port to the internet**
+- Connections use the two-step host-key fingerprint flow (TOFU); a host-key mismatch → a full stop with a security warning (no automatic bypass)
+- Storing the password on Windows happens only with your consent and in Windows Credential Manager (default: memory only)
+- The app console runs only pre-approved commands (preview = the exact command) — no free shell
+- Every destructive operation requires explicit confirmation; all changes are recorded in `/etc/hem/state.json`
+- Details: [`SECURITY.md`](SECURITY.md)
 
-## مستندات فارسی (۱۷ فصل)
+## Persian documentation (17 chapters)
 
-مرکز آموزش کامل در [`docs/fa/`](docs/fa/):
+The complete learning center lives in [`docs/fa/`](docs/fa/):
 
-۱. VPN چیست؟ · ۲. Headscale چیست؟ · ۳. مفاهیم ضروری شبکه · ۴. نصب اولیه · ۵. اتصال دستگاه‌ها · ۶. دسترسی به شبکهٔ دفتر · ۷. Exit Node · ۸. مدیریت روزمره · ۹. عیب‌یابی · ۱۰. امنیت و نگهداری · ۱۱. واژه‌نامه · ۱۲. پروژهٔ نمونهٔ عملی · ۱۳. دوربین‌های مداربسته و Dahua · ۱۴. راهنمای سریع · **۱۵. برنامهٔ ویندوزی (مدیریت با رابط گرافیکی)**
+1. What is a VPN? · 2. What is Headscale? · 3. Essential networking concepts · 4. Initial installation · 5. Connecting devices · 6. Office-network access · 7. Exit Node · 8. Day-to-day management · 9. Troubleshooting · 10. Security & maintenance · 11. Glossary · 12. A practical sample project · 13. CCTV cameras & Dahua · 14. Quick reference · **15. The Windows app (managing with a GUI)** · 16. The complete panel tutorial · 17. Connecting Windows to the Headscale server (Tailscale client)
 
-همین فصل‌ها داخل CLI (`hsctl learn`) و داخل برنامهٔ ویندوزی (بخش «آموزش») در دسترس‌اند.
+The same chapters are available inside the CLI (`hsctl learn`) and inside the Windows app (the "Learn" section).
 
-## ساختار پروژه
+## Project structure
 
 ```
-headscale-easy-manager/            ← همین مخزن (سمت سرور)
-├── install.sh                     # نصب‌کنندهٔ راه‌انداز
-├── hsctl                          # نقطهٔ ورود CLI
-├── src/hem/                       # بستهٔ پایتون: installer, system, network, headscale,
+headscale-easy-manager/            ← this repo (server side)
+├── install.sh                     # the bootstrap installer
+├── hsctl                          # the CLI entry point
+├── src/hem/                       # the Python package: installer, system, network, headscale,
 │                                  #   proxy, backup, diagnostics, cameras, learn, core
-├── docs/                          # FACTS + AGENT-API + معماری + fa/ (۱۷ فصل فارسی)
+├── docs/                          # FACTS + AGENT-API + architecture + fa/ (17 Persian chapters)
 ├── examples/ systemd/ scripts/ tests/
 
-محیط توسعه (بیرون از این مخزن):
-mini-services/hem-agent/           # عامل ویندوزی/محلی: src/ (SSH واقعی)، test/ (سرور آزمایشی)،
-│                                  #   packaging/build-windows.sh (بستهٔ exe)، ui/ (سرو می‌شود)
-پروژهٔ Next.js (src/)              # رابط وب فارسی — در بستهٔ ویندوز به‌صورت استاتیک سرو می‌شود
-scripts/release.sh                 # اسکریپت انتشار کامل
+Dev environment (outside this repo):
+mini-services/hem-agent/           # the Windows/local agent: src/ (real SSH), test/ (test server),
+│                                  #   packaging/build-windows.sh (the exe package), ui/ (served)
+Next.js project (src/)             # the Persian web UI — served statically inside the Windows package
+scripts/release.sh                 # the full release script
 ```
 
-## توسعه و تست
+## Development and tests
 
-| سوئیت | تعداد | اجرا |
+| Suite | Count | Run |
 |---|---|---|
-| پایتون (نصب‌کننده/hsctl/learn) | **۱۰۳ تست** | `python3 -m pytest tests/ -q` |
-| hem-agent (SSH واقعی/نصب/کنسول/پشتیبان) | **۸۳ تست** | `cd mini-services/hem-agent && bun test` |
+| Python (installer/hsctl/learn) | **103 tests** | `python3 -m pytest tests/ -q` |
+| hem-agent (real SSH/install/console/backup) | **83 tests** | `cd mini-services/hem-agent && bun test` |
 
 ```bash
 python3 -m pip install -e ".[dev]"
@@ -153,9 +155,9 @@ make test      # pytest
 make lint      # ruff
 ```
 
-> **صراحت دربارهٔ محدودهٔ تست:** تست‌های یکپارچهٔ واقعی (نصب کامل روی VPS، systemd، UFW، صدور گواهی واقعی، اتصال کلاینت واقعی) باید روی **سرور آزمایشی Ubuntu 22.04/24.04** اجرا شوند. بستهٔ exe ویندوزی cross-compile است؛ در محیط ساخت، «باینری لینوکسیِ همان سورس» به‌صورت زنده راستی‌آزمایی می‌شود (هر بار در `packaging/build-windows.sh`) و آزمون روی خودِ ویندوز باید در اولین فرصت تکرار شود.
+> **Testing scope, stated honestly:** real integration tests (a full install on a VPS, systemd, UFW, real certificate issuance, real client connections) must run on a **dedicated Ubuntu 22.04/24.04 test server**. The Windows exe is cross-compiled; in the build environment, "the Linux binary of the same source" is verified live (on every run of `packaging/build-windows.sh`), and testing on Windows itself must be repeated at the first opportunity.
 
-## انتقال مخزن به Git
+## Pushing the repo to Git
 
 ```bash
 cd headscale-easy-manager
@@ -163,10 +165,10 @@ git remote add origin git@github.com:USERNAME/headscale-easy-manager.git
 git push -u origin main
 ```
 
-## مجوز
+## License
 
-[MIT](LICENSE) — استفاده، تغییر و توزیع آزاد است.
+[MIT](LICENSE) — free to use, modify, and distribute.
 
 ---
 
-**نکتهٔ مفهومی:** Headscale فقط «هماهنگ‌کننده» شبکه است؛ ترافیک داده بین دستگاه‌ها معمولاً مستقیم و رمزنگاری‌شده (WireGuard) جابه‌جا می‌شود. برای دسترسی به شبکهٔ دفتر، یک دستگاه داخل دفتر باید «مسیریاب زیرشبکه» شود — آموزش کامل در فصل ۶.
+**A conceptual note:** Headscale is only the network's "coordinator"; data traffic between devices usually flows directly and encrypted (WireGuard). To reach the office network, one device inside the office must become a "subnet router" — the full tutorial is in chapter 6.

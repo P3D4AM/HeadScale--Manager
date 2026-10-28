@@ -1,8 +1,10 @@
-# سرویس systemd در Headscale Easy Manager
+# The systemd service in Headscale Easy Manager
 
-## واحد رسمی سرویس
+> Languages: **English** · [فارسی (Persian)](README-fa.md)
 
-نصب از طریق بسته رسمی `.deb` یک واحد systemd استاندارد نصب می‌کند (`/usr/systemd/system/headscale.service` یا مسیر معادل توزیع). واحد رسمی (مطابق مخزن upstream نسخه v0.29.5) به این صورت است:
+## The official service unit
+
+Installing via the official `.deb` package installs a standard systemd unit (`/usr/lib/systemd/system/headscale.service` or your distribution's equivalent path). The official unit (matching the upstream repo, version v0.29.5) looks like this:
 
 ```ini
 [Unit]
@@ -59,69 +61,69 @@ UMask=0077
 WantedBy=multi-user.target
 ```
 
-این واحد از نظر امنیتی Harden شده است: اجرا با کاربر اختصاصی `headscale`، فایل‌سیستم فقط‌خواندنی به‌جز `/var/lib/headscale`، محدودیت syscall و غیره. **نیازی به تغییر آن نیست** — نصب‌کننده و `hsctl` همین واحد رسمی را مدیریت می‌کنند.
+The unit is security-hardened: it runs as the dedicated `headscale` user, with a read-only filesystem except `/var/lib/headscale`, syscall restrictions, and more. **You never need to modify it** — the installer and `hsctl` manage exactly this official unit.
 
-## ویژگی‌های مدیریت سرویس توسط ابزار
+## Service-management features provided by the tool
 
-- **اجرای خودکار پس از ری‌استارت سرور:** `systemctl enable headscale` (به‌صورت خودکار در نصب)
-- **Restart Policy منطقی:** `Restart=always` با وقفه ۵ ثانیه (بخشی از واحد رسمی)
-- **جلوگیری از اجرای چند نمونه:** systemd به‌طور ذاتی فقط یک instance از هر `Type=simple` با این نام اجرا می‌کند
-- **اعتبارسنجی پیکربندی قبل از ری‌استارت:** `hsctl config validate` (اجرای `headscale configtest`) — قبل از هر restart/reload که ابزار انجام می‌دهد اجرا می‌شود
-- **دسترسی محدود فایل‌ها:** پیکربندی `640` و کلیدهای خصوصی در `/var/lib/headscale` با مالکیت کاربر `headscale`
+- **Automatic start after a server reboot:** `systemctl enable headscale` (done automatically during installation)
+- **A sane restart policy:** `Restart=always` with a 5-second pause (part of the official unit)
+- **Protection against multiple instances:** systemd inherently runs only one instance of a `Type=simple` unit under a given name
+- **Configuration validation before restart:** `hsctl config validate` (runs `headscale configtest`) — executed before every restart/reload the tool performs
+- **Restrictive file permissions:** the config file at `640`, and private keys under `/var/lib/headscale` owned by the `headscale` user
 
-## دستورات پرکاربرد
+## Common commands
 
 ```bash
-# وضعیت سرویس
+# Service status
 sudo systemctl status headscale
 
-# راه‌اندازی / توقف / ری‌استارت
+# Start / stop / restart
 sudo systemctl start headscale
 sudo systemctl stop headscale
 sudo systemctl restart headscale
 
-# فعال/غیرفعال‌کردن اجرای خودکار در بوت
+# Enable/disable automatic start at boot
 sudo systemctl enable headscale
 sudo systemctl disable headscale
 
-# مشاهده لاگ‌ها
-sudo journalctl -u headscale -n 100          # ۱۰۰ خط آخر
-sudo journalctl -u headscale -f              # پایش زنده
+# View logs
+sudo journalctl -u headscale -n 100          # the last 100 lines
+sudo journalctl -u headscale -f              # live follow
 sudo journalctl -u headscale --since "1 hour ago"
 
-# فقط خطاها
+# Errors only
 sudo journalctl -u headscale -p err -n 50
 
-# اعمال مجدد پیکربندی systemd بعد از تغییر unit/override
+# Re-apply the systemd configuration after changing the unit/an override
 sudo systemctl daemon-reload
 ```
 
-معادل‌های داخل ابزار: `hsctl status`، `hsctl logs [--follow]`، `hsctl doctor` و `hsctl config validate`.
+In-tool equivalents: `hsctl status`, `hsctl logs [--follow]`, `hsctl doctor`, and `hsctl config validate`.
 
-## Override (تغییر تنظیمات بدون دست‌زدن به فایل اصلی)
+## Overrides (changing settings without touching the original file)
 
-اگر روزی لازم شد چیزی را تغییر دهید (مثلاً محدودیت منابع)، به‌جای ویرایش فایل اصلی از override استفاده کنید:
+If one day you need to change something (for example a resource limit), use an override instead of editing the original file:
 
 ```bash
 sudo systemctl edit headscale
 ```
 
-سپس در ویرایشگر بازشده مثلاً:
+Then, in the editor that opens, for example:
 
 ```ini
 [Service]
 MemoryMax=512M
 ```
 
-و در پایان:
+And finally:
 
 ```bash
 sudo systemctl daemon-reload
 sudo systemctl restart headscale
 ```
 
-فایل override در `/etc/systemd/system/headscale.service.d/override.conf` ذخیره می‌شود و به‌صورت خودکار در پشتیبان‌گیری `hsctl backup create` هم گنجانده می‌شود.
+The override is stored at `/etc/systemd/system/headscale.service.d/override.conf` and is automatically included in `hsctl backup create` backups as well.
 
-## نکته درباره سوکت CLI
+## A note about the CLI socket
 
-دستورهای `headscale` از طریق سوکت یونیکس `/var/run/headscale/headscale.sock` (سطح دسترسی `0770`) با سرویس صحبت می‌کنند؛ فقط `root` یا اعضای گروه `headscale` دسترسی دارند. ابزار `hsctl` این را خودکار مدیریت می‌کند (اجرای sudo در صورت نیاز)، بنابراین همیشه `hsctl` را با `sudo` اجرا کنید.
+`headscale` commands talk to the service through the Unix socket `/var/run/headscale/headscale.sock` (mode `0770`); only `root` or members of the `headscale` group have access. The `hsctl` tool handles this automatically (running sudo when needed), so always run `hsctl` with `sudo`.
